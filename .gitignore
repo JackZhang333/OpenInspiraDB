@@ -1,5 +1,49 @@
+# Dependencies
 node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
 dist/
-.DS_Store
-coverage/
+build/
+out/
+release/
+
+# Vite
+.vite/
 renderer/.vite/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Test
+test-results/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local data
+data/*.db
+data/*.sqlite
