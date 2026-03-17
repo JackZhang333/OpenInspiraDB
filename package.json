@@ -1,0 +1,14 @@
+{
+  "name": "inspiradb-v1a",
+  "version": "0.1.0",
+  "description": "InspiraDB V1-A core implementation",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/cli/demo.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
