@@ -1,14 +1,38 @@
 {
-  "name": "inspiradb-v1a",
+  "name": "inspiradb",
   "version": "0.1.0",
-  "description": "InspiraDB V1-A core implementation",
+  "description": "InspiraDB - AI-powered design asset manager",
   "type": "module",
   "private": true,
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "electron:dev": "npm run build && electron .",
+    "electron:build": "npm run build && electron-builder",
     "start": "node src/cli/demo.js",
     "test": "node --test"
   },
+  "dependencies": {
+    "lucide-react": "^0.400.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.4",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^31.2.0",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "vite": "^5.3.4"
+  },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "main": "electron/main.js"
 }
