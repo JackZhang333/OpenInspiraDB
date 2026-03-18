@@ -12,8 +12,8 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:dmg": "npm run build && electron-builder --mac dmg",
     "dist:dmg:unsigned": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg",
-    "dist:mas": "npm run build && electron-builder --mac mas",
-    "dist:mas-dev": "npm run build && electron-builder --mac mas-dev",
+    "dist:mas": "npm run build && electron-builder --config electron-builder.mas.cjs",
+    "dist:mas-dev": "npm run build && electron-builder --config electron-builder.mas-dev.cjs",
     "icon:mac": "node scripts/build-mac-icon.mjs",
     "start": "node src/cli/demo.js",
     "test": "node --test"
