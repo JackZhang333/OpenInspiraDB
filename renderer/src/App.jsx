@@ -1,246 +1,167 @@
-import React, { useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
+import { cn } from './lib/utils.js';
+import { useAppStore } from './store/useAppStore.js';
 import { AppSidebar } from './components/AppSidebar.jsx';
 import { LibraryWorkspace } from './components/LibraryWorkspace.jsx';
 import { DetailPanel } from './components/DetailPanel.jsx';
 import { SettingsPanel } from './components/SettingsPanel.jsx';
 
-function App() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState(null);
-  const [availableTags, setAvailableTags] = useState([]);
-  const [selectedTag, setSelectedTag] = useState(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState({
-    provider: 'zhipu',
-    apiKey: '',
-  });
+export default function App() {
+  const {
+    query,
+    selectedTag,
+    result,
+    availableTags,
+    selectedImageId,
+    detail,
+    settings,
+    importing,
+    importProgress,
+    detailLoading,
+    saving,
+    error,
+    setQuery,
+    runSearch,
+    refreshSearch,
+    selectTag,
+    clearTag,
+    importFolder,
+    importFile,
+    selectImage,
+    saveMetadata,
+    rebuildAnalysis,
+    deleteSelected,
+    saveSettings,
+    init,
+  } = useAppStore();
 
-  // 素材列表状态
-  const [mediaList, setMediaList] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [queryDraft, setQueryDraft] = useState(query);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // 筛选后的素材列表
-  const filteredMedia = mediaList.filter((media) => {
-    if (selectedTag) {
-      return media.tags?.includes(selectedTag);
-    }
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return (
-        media.caption?.toLowerCase().includes(query) ||
-        media.tags?.some((tag) => tag.toLowerCase().includes(query)) ||
-        media.filename?.toLowerCase().includes(query)
-      );
-    }
-    return true;
-  });
+  useEffect(() => {
+    init();
+  }, [init]);
 
-  // 切换侧边栏折叠
-  const toggleCollapse = useCallback(() => {
-    setCollapsed((c) => !c);
-  }, []);
+  useEffect(() => {
+    setQueryDraft(query);
+  }, [query]);
 
-  // 导入文件夹
-  const handleImportFolder = useCallback(async () => {
-    if (importing) return;
+  const detailDrawerOpen = Boolean(selectedImageId);
+  const shellGridClass = useMemo(() => (
+    sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[232px_minmax(0,1fr)]'
+  ), [sidebarCollapsed]);
 
-    try {
-      setImporting(true);
-      setImportProgress({ mode: 'folder', current: 0, total: 0, phase: 'scanning' });
+  const handleSubmitSearch = () => {
+    setQuery(queryDraft);
+    runSearch();
+  };
 
-      const result = await window.inspira?.selectFolder?.();
-      if (!result) {
-        setImporting(false);
-        setImportProgress(null);
-        return;
-      }
-
-      // 模拟进度更新
-      const files = result.files || [];
-      setImportProgress({
-        mode: 'folder',
-        current: 0,
-        total: files.length,
-        phase: 'analyzing',
-        importedCount: 0,
-        analyzingCount: 0,
-        readyCount: 0,
-        failedCount: 0,
-        duplicateCount: 0,
-      });
-
-      // 实际导入逻辑应该在这里
-      // 这里简化处理，实际应该调用后端 API
-      setTimeout(() => {
-        setImporting(false);
-        setImportProgress(null);
-        // 刷新列表
-      }, 2000);
-    } catch (error) {
-      console.error('导入失败:', error);
-      setImporting(false);
-      setImportProgress(null);
-    }
-  }, [importing]);
-
-  // 导入文件
-  const handleImportFile = useCallback(async () => {
-    if (importing) return;
-
-    try {
-      setImporting(true);
-      setImportProgress({ mode: 'file', current: 0, total: 1 });
-
-      const result = await window.inspira?.selectFiles?.();
-      if (!result) {
-        setImporting(false);
-        setImportProgress(null);
-        return;
-      }
-
-      // 模拟进度
-      setTimeout(() => {
-        setImporting(false);
-        setImportProgress(null);
-      }, 1500);
-    } catch (error) {
-      console.error('导入失败:', error);
-      setImporting(false);
-      setImportProgress(null);
-    }
-  }, [importing]);
-
-  // 选择标签
-  const handleSelectTag = useCallback((tag) => {
-    setSelectedTag(tag);
-  }, []);
-
-  // 清空标签筛选
-  const handleClearTag = useCallback(() => {
-    setSelectedTag(null);
-  }, []);
-
-  // 打开设置
-  const handleOpenSettings = useCallback(() => {
-    setSettingsOpen(true);
-  }, []);
-
-  // 保存设置
-  const handleSaveSettings = useCallback(async (newSettings) => {
-    setSettings(newSettings);
-    // 调用后端保存设置
-    await window.inspira?.saveSettings?.(newSettings);
-  }, []);
-
-  // 选择素材
-  const handleSelectMedia = useCallback((media) => {
-    setSelectedId(media.id);
-  }, []);
-
-  // 关闭详情面板
-  const handleCloseDetail = useCallback(() => {
-    setSelectedId(null);
-  }, []);
-
-  // 搜索
-  const handleSearch = useCallback((query) => {
-    setSearchQuery(query);
-  }, []);
-
-  // 保存元数据
-  const handleSaveMetadata = useCallback(async (metadata) => {
-    const media = mediaList.find((m) => m.id === selectedId);
-    if (!media) return;
-
-    // 调用后端保存
-    await window.inspira?.updateMedia?.(selectedId, metadata);
-
-    // 更新本地状态
-    setMediaList((list) =>
-      list.map((m) =>
-        m.id === selectedId ? { ...m, ...metadata } : m
-      )
-    );
-  }, [mediaList, selectedId]);
-
-  // 删除素材
-  const handleDelete = useCallback(async () => {
-    if (!selectedId) return;
-
-    await window.inspira?.deleteMedia?.(selectedId);
-    setMediaList((list) => list.filter((m) => m.id !== selectedId));
-    setSelectedId(null);
-  }, [selectedId]);
-
-  // 刷新分析
-  const handleRefresh = useCallback(async () => {
-    if (!selectedId) return;
-
-    setIsAnalyzing(true);
-    await window.inspira?.reanalyze?.(selectedId);
-    setIsAnalyzing(false);
-  }, [selectedId]);
-
-  // 获取当前选中的素材
-  const selectedMedia = mediaList.find((m) => m.id === selectedId);
+  const handleSaveSettings = async (payload) => {
+    await saveSettings(payload);
+    setShowSettings(false);
+  };
 
   return (
-    <div className="flex h-screen w-full bg-[#f8faf6]">
-      {/* 侧边栏 */}
-      <div
-        className="flex-shrink-0 transition-all duration-300"
-        style={{ width: collapsed ? 64 : 240 }}
-      >
-        <AppSidebar
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapse}
-          importing={importing}
-          importProgress={importProgress}
-          onImportFolder={handleImportFolder}
-          onImportFile={handleImportFile}
-          availableTags={availableTags}
-          selectedTag={selectedTag}
-          onSelectTag={handleSelectTag}
-          onClearTag={handleClearTag}
-          onOpenSettings={handleOpenSettings}
+    <main className="h-screen overflow-hidden bg-transparent">
+      <div className={cn('relative grid h-full w-full gap-0 overflow-hidden transition-[grid-template-columns] duration-300', shellGridClass)}>
+        <div className="min-h-0">
+          <AppSidebar
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
+            importing={importing}
+            importProgress={importProgress}
+            onImportFolder={importFolder}
+            onImportFile={importFile}
+            availableTags={availableTags}
+            selectedTag={selectedTag}
+            onSelectTag={(tagName) => {
+              if (tagName) {
+                selectTag(tagName);
+                return;
+              }
+              clearTag();
+            }}
+            onClearTag={clearTag}
+            onOpenSettings={() => setShowSettings(true)}
+          />
+        </div>
+
+        <section className="flex min-h-0 flex-col overflow-hidden border-l border-[#d7dfd3] bg-[#f6f8f2]">
+          {error ? (
+            <div className="border-b border-rose-200 bg-rose-50/90 px-5 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <LibraryWorkspace
+              queryDraft={queryDraft}
+              onQueryDraftChange={setQueryDraft}
+              onSubmitSearch={handleSubmitSearch}
+              onRefresh={refreshSearch}
+              selectedTag={selectedTag}
+              onClearTag={clearTag}
+              result={result}
+              selectedImageId={selectedImageId}
+              onSelectImage={selectImage}
+            />
+          </div>
+        </section>
+
+        <aside className="pointer-events-none absolute inset-0 z-20 overflow-hidden bg-transparent">
+          <div
+            className={cn(
+              'pointer-events-auto absolute inset-0 bg-ink/40 transition-opacity duration-500 ease-in-out',
+              detailDrawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+            )}
+            onClick={() => selectImage(null)}
+          />
+
+          <div
+            className={cn(
+              'pointer-events-auto absolute inset-y-0 right-0 h-full w-[min(420px,calc(100vw-24px))] border-l border-clay/10 bg-off-white shadow-2xl transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] md:w-[420px]',
+              detailDrawerOpen ? 'translate-x-0' : 'translate-x-full',
+            )}
+          >
+            <div className="flex h-full min-h-0 flex-col border-0 bg-transparent shadow-none">
+              <div className="flex items-center justify-between border-b border-clay/10 bg-white/50 px-6 py-5 backdrop-blur-sm">
+                <div className="space-y-1">
+                  <h2 className="text-[22px] font-bold tracking-tight text-ink">详情</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => selectImage(null)}
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-clay/10 bg-white text-ink/40 shadow-sm transition-all hover:bg-rose-50 hover:text-rose-500 hover:ring-2 hover:ring-rose-200"
+                  aria-label="关闭详情"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto">
+                <DetailPanel
+                  detail={detail}
+                  loading={detailLoading}
+                  saving={saving || importing}
+                  onSaveMetadata={saveMetadata}
+                  onReanalyze={rebuildAnalysis}
+                  onDelete={deleteSelected}
+                />
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <SettingsPanel
+          open={showSettings}
+          settings={settings}
+          saving={saving}
+          onSave={handleSaveSettings}
+          onClose={() => setShowSettings(false)}
         />
       </div>
-
-      {/* 主工作区 */}
-      <main className="flex-1 min-w-0">
-        <LibraryWorkspace
-          mediaList={filteredMedia}
-          selectedId={selectedId}
-          onSelectMedia={handleSelectMedia}
-          onSearch={handleSearch}
-          searchQuery={searchQuery}
-          isAnalyzing={isAnalyzing}
-        />
-      </main>
-
-      {/* 详情面板 */}
-      {selectedMedia && (
-        <DetailPanel
-          media={selectedMedia}
-          onClose={handleCloseDetail}
-          onSave={handleSaveMetadata}
-          onDelete={handleDelete}
-          onRefresh={handleRefresh}
-        />
-      )}
-
-      {/* 设置弹窗 */}
-      <SettingsPanel
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        settings={settings}
-        onSave={handleSaveSettings}
-      />
-    </div>
+    </main>
   );
 }
-
-export default App;

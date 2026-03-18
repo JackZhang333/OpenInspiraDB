@@ -26,23 +26,25 @@ function buildMockTags(image) {
   return uniqueNonEmptyTags(merged).slice(0, 8);
 }
 
-function upsertEmbedding(db, imageId, vector) {
+export function upsertEmbedding(db, imageId, vector, provider = 'mock', modelName = 'mock-embed-v1') {
   const now = nowIso();
   const serialized = JSON.stringify(vector);
   const existing = db.get('SELECT id FROM embeddings WHERE image_id = :imageId', { imageId });
   if (existing) {
     db.run(
-      `UPDATE embeddings
+       `UPDATE embeddings
        SET vector = :vector,
            dimension = :dimension,
-           model_provider = 'mock',
-           model_name = 'mock-embed-v1',
+           model_provider = :provider,
+           model_name = :modelName,
            created_at = :now
        WHERE image_id = :imageId`,
       {
         imageId,
         vector: serialized,
         dimension: vector.length,
+        provider,
+        modelName,
         now,
       },
     );
@@ -61,20 +63,22 @@ function upsertEmbedding(db, imageId, vector) {
       :imageId,
       :vector,
       :dimension,
-      'mock',
-      'mock-embed-v1',
+      :provider,
+      :modelName,
       :now
     )`,
     {
       imageId,
       vector: serialized,
       dimension: vector.length,
+      provider,
+      modelName,
       now,
     },
   );
 }
 
-function saveAiTags(db, imageId, tagNames) {
+export function saveAiTags(db, imageId, tagNames) {
   const now = nowIso();
   db.run("DELETE FROM image_tags WHERE image_id = :imageId AND source = 'ai'", { imageId });
 
@@ -189,7 +193,7 @@ export class MockAiService {
       saveAiTags(this.db, imageId, aiTags);
 
       const vector = embedTextMock(activeCaptionContent);
-      upsertEmbedding(this.db, imageId, vector);
+      upsertEmbedding(this.db, imageId, vector, 'mock', 'mock-embed-v1');
 
       this.db.run(
         `UPDATE images
@@ -236,7 +240,7 @@ export class MockAiService {
 
     this.db.transaction(() => {
       const vector = embedTextMock(activeCaption.content);
-      upsertEmbedding(this.db, imageId, vector);
+      upsertEmbedding(this.db, imageId, vector, 'mock', 'mock-embed-v1');
       this.db.run(
         `UPDATE images
          SET needs_embedding_refresh = 0,
@@ -247,5 +251,9 @@ export class MockAiService {
     });
 
     this.logger.info('embedding-refresh-succeeded', { imageId });
+  }
+
+  async embedText(text) {
+    return embedTextMock(text);
   }
 }

@@ -69,7 +69,7 @@ async function main() {
       const tags = parseTags(args);
       const page = parsePage(args);
       const pageSize = parsePageSize(args);
-      const result = app.searchImages(query, tags, { page, pageSize });
+      const result = await app.searchImages(query, tags, { page, pageSize });
       console.log(JSON.stringify(result, null, 2));
       return;
     }

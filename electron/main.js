@@ -1,40 +1,238 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import * as electron from 'electron';
+import { InspiraDBApp } from '../src/index.js';
+
+const { app, BrowserWindow, dialog, ipcMain, nativeImage } = electron;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'bmp'];
 
 let mainWindow = null;
+let inspiraApp = null;
 
-function createWindow() {
+function emitImportProgress(payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send('inspiradb:import-progress', payload);
+}
+
+function toMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.heic') return 'image/heic';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.bmp') return 'image/bmp';
+  return 'application/octet-stream';
+}
+
+function fileToDataUrl(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return null;
+  }
+
+  const mimeType = toMimeType(filePath);
+  const base64 = fs.readFileSync(filePath).toString('base64');
+  return `data:${mimeType};base64,${base64}`;
+}
+
+function decorateSearchItems(result) {
+  return {
+    ...result,
+    items: (result.items || []).map((item) => ({
+      ...item,
+      thumbnail_data_url: fileToDataUrl(item.thumbnail_path),
+    })),
+  };
+}
+
+function decorateImageDetail(detail) {
+  return {
+    ...detail,
+    image: {
+      ...detail.image,
+      preview_data_url: fileToDataUrl(detail.image.library_path),
+      thumbnail_data_url: fileToDataUrl(detail.image.thumbnail_path),
+    },
+  };
+}
+
+function resolveDragFilePath(filePath) {
+  if (!filePath) {
+    return '';
+  }
+
+  const resolvedPath = path.resolve(String(filePath));
+  if (!fs.existsSync(resolvedPath)) {
+    return '';
+  }
+
+  try {
+    const stat = fs.statSync(resolvedPath);
+    return stat.isFile() ? resolvedPath : '';
+  } catch {
+    return '';
+  }
+}
+
+function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 700,
+    width: 1520,
+    height: 940,
+    minWidth: 1180,
+    minHeight: 760,
+    backgroundColor: '#ecf1eb',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
     },
   });
 
-  // 加载应用
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'index.html'));
   }
+}
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+function createInspiraApp() {
+  const userDataPath = app.getPath('userData');
+  return new InspiraDBApp({
+    dbPath: path.join(userDataPath, 'inspiradb.sqlite'),
+    libraryRootPath: path.join(userDataPath, 'library'),
+    thumbnailRootPath: path.join(userDataPath, 'thumbnails'),
+    autoStartQueue: true,
   });
 }
 
-app.whenReady().then(createWindow);
+function registerIpcHandlers() {
+  ipcMain.handle('inspiradb:import-folder', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要导入的图片文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      return { canceled: true };
+    }
+
+    emitImportProgress({ mode: 'folder', phase: 'started', current: 0, total: 1 });
+
+    try {
+      const summary = await inspiraApp.importFolder(result.filePaths[0]);
+      emitImportProgress({ mode: 'folder', phase: 'completed', current: 1, total: 1, ...summary });
+      return summary;
+    } catch (error) {
+      emitImportProgress({ mode: 'folder', phase: 'error', message: String(error?.message || error) });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('inspiradb:import-file', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要导入的图片',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      return { canceled: true };
+    }
+
+    emitImportProgress({ mode: 'single', phase: 'started', current: 0, total: 1 });
+
+    try {
+      const importResult = await inspiraApp.importFile(result.filePaths[0]);
+      emitImportProgress({ mode: 'single', phase: 'completed', current: 1, total: 1, status: importResult?.status });
+      return importResult;
+    } catch (error) {
+      emitImportProgress({ mode: 'single', phase: 'error', current: 1, total: 1, message: String(error?.message || error) });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('inspiradb:search', async (_, payload = {}) => {
+    const searchResult = await inspiraApp.searchImages(payload.query, payload.selectedTags, {
+      page: payload.page,
+      pageSize: payload.pageSize,
+    });
+
+    return decorateSearchItems(searchResult);
+  });
+
+  ipcMain.handle('inspiradb:detail', (_, imageId) => {
+    return decorateImageDetail(inspiraApp.getImageDetail(imageId));
+  });
+
+  ipcMain.handle('inspiradb:update-caption', (_, payload = {}) => {
+    return inspiraApp.updateImageCaption(payload.imageId, payload.content);
+  });
+
+  ipcMain.handle('inspiradb:update-tags', (_, payload = {}) => {
+    return inspiraApp.updateImageTags(payload.imageId, payload.tags);
+  });
+
+  ipcMain.handle('inspiradb:reanalyze', (_, imageId) => {
+    return inspiraApp.rebuildImageAnalysis(imageId);
+  });
+
+  ipcMain.handle('inspiradb:delete', (_, imageId) => {
+    return inspiraApp.deleteImage(imageId);
+  });
+
+  ipcMain.handle('inspiradb:filter-tags', (_, query = '') => {
+    return inspiraApp.getFilterTags(query);
+  });
+
+  ipcMain.handle('inspiradb:get-settings', () => {
+    return inspiraApp.getAppSettings();
+  });
+
+  ipcMain.handle('inspiradb:update-settings', (_, payload = {}) => {
+    return inspiraApp.updateAppSettings(payload);
+  });
+
+  ipcMain.on('inspiradb:start-drag-image', (event, payload = {}) => {
+    const filePath = resolveDragFilePath(payload.filePath);
+    if (!filePath) {
+      return;
+    }
+
+    const iconPath = resolveDragFilePath(payload.iconPath) || filePath;
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) {
+      return;
+    }
+
+    event.sender.startDrag({
+      file: filePath,
+      icon,
+    });
+  });
+}
+
+app.whenReady().then(() => {
+  inspiraApp = createInspiraApp();
+  registerIpcHandlers();
+  createMainWindow();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow();
+    }
+  });
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -42,58 +240,8 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+app.on('before-quit', () => {
+  if (inspiraApp) {
+    inspiraApp.close();
   }
-});
-
-// IPC 处理
-ipcMain.handle('select-folder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: '选择文件夹导入',
-  });
-
-  if (result.canceled) return null;
-
-  return {
-    folderPath: result.filePaths[0],
-    files: [], // 实际应该扫描文件夹中的图片
-  };
-});
-
-ipcMain.handle('select-files', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] },
-    ],
-    title: '选择图片导入',
-  });
-
-  if (result.canceled) return null;
-
-  return {
-    filePaths: result.filePaths,
-  };
-});
-
-ipcMain.handle('get-settings', async () => {
-  // 从本地存储读取设置
-  return {
-    provider: 'zhipu',
-    apiKey: '',
-  };
-});
-
-ipcMain.handle('save-settings', async (event, settings) => {
-  // 保存设置到本地存储
-  console.log('保存设置:', settings);
-  return true;
-});
-
-ipcMain.handle('start-drag-image', async (event, filePath) => {
-  // 处理图片拖拽
-  console.log('开始拖拽:', filePath);
 });

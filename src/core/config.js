@@ -25,7 +25,7 @@ export const QUEUE_CONCURRENCY = 3;
 export const JOB_TIMEOUT_MS = 60_000;
 export const SEARCH_PAGE_SIZE = 50;
 
-export const DEFAULT_VECTOR_DIMENSION = 64;
+export const DEFAULT_VECTOR_DIMENSION = 256;
 
 export function defaultPaths(rootDir) {
   return {

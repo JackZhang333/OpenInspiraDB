@@ -1,9 +1,84 @@
 import { create } from 'zustand';
 
+const ERROR_MESSAGES = {
+  EMPTY_CAPTION: '描述不能为空',
+  IMAGE_NOT_FOUND: '图片不存在，可能已被删除',
+  DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
+  ZHIPU_API_KEY_MISSING: '请先在设置中填写智谱 API Key，或配置 ZHIPU_API_KEY 环境变量',
+  ZHIPU_API_REQUEST_FAILED: '智谱接口请求失败，请检查 API Key、网络或模型权限',
+  ZHIPU_EMBEDDING_EMPTY: '智谱 embeddings 返回为空，请稍后重试',
+};
+
+function getBridge() {
+  const bridge = window?.inspira;
+  if (!bridge) {
+    const error = new Error('DESKTOP_BRIDGE_UNAVAILABLE');
+    error.code = 'DESKTOP_BRIDGE_UNAVAILABLE';
+    throw error;
+  }
+  return bridge;
+}
+
+function getErrorKey(error) {
+  if (!error) {
+    return '';
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (typeof error.code === 'string' && error.code) {
+    return error.code;
+  }
+
+  if (typeof error.message === 'string' && error.message) {
+    return error.message;
+  }
+
+  return '';
+}
+
 function getErrorMessage(error) {
-  if (!error) return '未知错误';
-  if (typeof error === 'string') return error;
-  return error.message || '请求失败';
+  const errorKey = getErrorKey(error);
+  if (errorKey && ERROR_MESSAGES[errorKey]) {
+    return ERROR_MESSAGES[errorKey];
+  }
+
+  if (!error) {
+    return '未知错误';
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error.message) {
+    return error.message;
+  }
+
+  return '请求失败';
+}
+
+let importProgressUnsubscribe = null;
+
+function normalizeImportProgress(payload = {}) {
+  const total = Number(payload.total);
+  const current = Number(payload.current);
+
+  return {
+    mode: String(payload.mode || 'single'),
+    phase: String(payload.phase || 'processing'),
+    total: Number.isFinite(total) && total >= 0 ? total : 0,
+    current: Number.isFinite(current) && current >= 0 ? current : 0,
+    importedCount: Number(payload.importedCount || 0),
+    duplicateCount: Number(payload.duplicateCount || 0),
+    skippedCount: Number(payload.skippedCount || 0),
+    readyCount: Number(payload.readyCount || 0),
+    failedCount: Number(payload.failedCount || 0),
+    analyzingCount: Number(payload.analyzingCount || 0),
+    message: String(payload.message || ''),
+  };
 }
 
 export const useAppStore = create((set, get) => ({
@@ -27,6 +102,33 @@ export const useAppStore = create((set, get) => ({
     set({ query });
   },
 
+  ensureImportProgressListener() {
+    const bridge = window?.inspira;
+    if (importProgressUnsubscribe || typeof bridge?.onImportProgress !== 'function') {
+      return;
+    }
+
+    importProgressUnsubscribe = bridge.onImportProgress((payload = {}) => {
+      const progress = normalizeImportProgress(payload);
+      const isActive = ['started', 'processing'].includes(progress.phase);
+
+      set({
+        importProgress: progress,
+        importing: isActive,
+      });
+
+      if (progress.phase === 'completed') {
+        get().refreshSearch().finally(() => {
+          set({ importing: false, importProgress: null });
+        });
+      }
+
+      if (progress.phase === 'error') {
+        set({ importing: false });
+      }
+    });
+  },
+
   async runSearch() {
     set({ page: 1 });
     return get().refreshSearch();
@@ -48,9 +150,10 @@ export const useAppStore = create((set, get) => ({
 
     try {
       const selectedTags = selectedTag ? [selectedTag] : [];
+      const bridge = getBridge();
       const [result, availableTags] = await Promise.all([
-        window.inspira.search({ query, selectedTags, page, pageSize }),
-        window.inspira.getFilterTags(query),
+        bridge.search({ query, selectedTags, page, pageSize }),
+        bridge.getFilterTags(query),
       ]);
 
       set({
@@ -80,12 +183,13 @@ export const useAppStore = create((set, get) => ({
   },
 
   async init() {
+    get().ensureImportProgressListener();
     await Promise.all([get().refreshSearch(), get().loadSettings()]);
   },
 
   async loadSettings() {
     try {
-      const settings = await window.inspira.getSettings();
+      const settings = await getBridge().getSettings();
       set({ settings });
     } catch (error) {
       set({ error: getErrorMessage(error) });
@@ -95,9 +199,8 @@ export const useAppStore = create((set, get) => ({
   async saveSettings(payload) {
     set({ saving: true, error: null });
     try {
-      const settings = await window.inspira.updateSettings(payload);
+      const settings = await getBridge().updateSettings(payload);
       set({ settings, saving: false });
-      await get().refreshSearch();
       return settings;
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
@@ -106,31 +209,41 @@ export const useAppStore = create((set, get) => ({
   },
 
   async importFolder() {
+    get().ensureImportProgressListener();
     set({ importing: true, error: null });
+
     try {
-      const result = await window.inspira.importFolder();
-      set({ importing: false });
-      if (!result?.canceled) {
+      const bridge = getBridge();
+      const result = await bridge.importFolder();
+      if (result?.canceled) {
+        set({ importing: false, importProgress: null });
+      } else if (typeof bridge.onImportProgress !== 'function') {
         await get().refreshSearch();
+        set({ importing: false, importProgress: null });
       }
       return result;
     } catch (error) {
-      set({ importing: false, error: getErrorMessage(error) });
+      set({ importing: false, importProgress: null, error: getErrorMessage(error) });
       throw error;
     }
   },
 
   async importFile() {
+    get().ensureImportProgressListener();
     set({ importing: true, error: null });
+
     try {
-      const result = await window.inspira.importFile();
-      set({ importing: false });
-      if (!result?.canceled) {
+      const bridge = getBridge();
+      const result = await bridge.importFile();
+      if (result?.canceled) {
+        set({ importing: false, importProgress: null });
+      } else if (typeof bridge.onImportProgress !== 'function') {
         await get().refreshSearch();
+        set({ importing: false, importProgress: null });
       }
       return result;
     } catch (error) {
-      set({ importing: false, error: getErrorMessage(error) });
+      set({ importing: false, importProgress: null, error: getErrorMessage(error) });
       throw error;
     }
   },
@@ -149,7 +262,7 @@ export const useAppStore = create((set, get) => ({
 
     set({ detailLoading: true });
     try {
-      const detail = await window.inspira.getImageDetail(imageId);
+      const detail = await getBridge().getImageDetail(imageId);
       set({ detail, detailLoading: false });
     } catch (error) {
       set({ detailLoading: false, error: getErrorMessage(error) });
@@ -157,14 +270,15 @@ export const useAppStore = create((set, get) => ({
   },
 
   async saveMetadata(imageId, { caption, tags }) {
-    if (!imageId) return;
+    if (!imageId) {
+      return;
+    }
 
     set({ saving: true, error: null });
     try {
-      await Promise.all([
-        window.inspira.updateImageCaption(imageId, caption),
-        window.inspira.updateImageTags(imageId, tags),
-      ]);
+      const bridge = getBridge();
+      await bridge.updateImageCaption(imageId, caption);
+      await bridge.updateImageTags(imageId, tags);
       await get().refreshSearch();
       await get().reloadSelectedDetail();
       set({ saving: false });
@@ -176,11 +290,13 @@ export const useAppStore = create((set, get) => ({
 
   async rebuildAnalysis() {
     const imageId = get().selectedImageId;
-    if (!imageId) return;
+    if (!imageId) {
+      return;
+    }
 
     set({ saving: true, error: null });
     try {
-      await window.inspira.rebuildImageAnalysis(imageId);
+      await getBridge().rebuildImageAnalysis(imageId);
       await get().refreshSearch();
       await get().reloadSelectedDetail();
       set({ saving: false });
@@ -191,11 +307,13 @@ export const useAppStore = create((set, get) => ({
 
   async deleteSelected() {
     const imageId = get().selectedImageId;
-    if (!imageId) return;
+    if (!imageId) {
+      return;
+    }
 
     set({ saving: true, error: null });
     try {
-      await window.inspira.deleteImage(imageId);
+      await getBridge().deleteImage(imageId);
       set({ selectedImageId: null, detail: null });
       await get().refreshSearch();
       set({ saving: false });

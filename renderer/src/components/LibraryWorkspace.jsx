@@ -1,171 +1,220 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Search, Sparkles, ImageIcon } from 'lucide-react';
-import { cn } from '../lib/utils.js';
+import React from 'react';
+import { RefreshCcw, Search, Sparkles } from 'lucide-react';
+import { Badge } from './ui/badge.jsx';
 import { GalleryCard } from './GalleryCard.jsx';
 
 export function LibraryWorkspace({
-  mediaList,
-  selectedId,
-  onSelectMedia,
-  onDragStart,
-  onDragEnd,
-  onSearch,
-  searchQuery,
-  isAnalyzing,
+  queryDraft,
+  onQueryDraftChange,
+  onSubmitSearch,
+  onRefresh,
+  selectedTag,
+  onClearTag,
+  result,
+  selectedImageId,
+  onSelectImage,
 }) {
-  const [localQuery, setLocalQuery] = useState(searchQuery || '');
-  const [columns, setColumns] = useState(3);
-  const containerRef = useRef(null);
+  const hasTagFilter = Boolean(selectedTag);
+  const [columnCount, setColumnCount] = React.useState(5);
+  const [hoveredCardId, setHoveredCardId] = React.useState(null);
+  const [draggingCardId, setDraggingCardId] = React.useState(null);
+  const [dismissedCardId, setDismissedCardId] = React.useState(null);
 
-  // 响应式列数计算
-  useEffect(() => {
-    const updateColumns = () => {
+  React.useEffect(() => {
+    const updateCount = () => {
       const width = window.innerWidth;
-      if (width < 640) setColumns(2);
-      else if (width < 1024) setColumns(3);
-      else if (width < 1440) setColumns(4);
-      else if (width < 1920) setColumns(5);
-      else setColumns(6);
+      if (width >= 2560) setColumnCount(7);
+      else if (width >= 1920) setColumnCount(6);
+      else if (width >= 1536) setColumnCount(5);
+      else if (width >= 1280) setColumnCount(4);
+      else if (width >= 1024) setColumnCount(3);
+      else if (width >= 768) setColumnCount(2);
+      else setColumnCount(1);
     };
 
-    updateColumns();
-    window.addEventListener('resize', updateColumns);
-    return () => window.removeEventListener('resize', updateColumns);
+    updateCount();
+    window.addEventListener('resize', updateCount);
+    return () => window.removeEventListener('resize', updateCount);
   }, []);
 
-  // 防抖搜索
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (localQuery !== searchQuery) {
-        onSearch?.(localQuery);
+  React.useEffect(() => {
+    const clearDragAffordance = () => {
+      setHoveredCardId(null);
+      setDraggingCardId(null);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearDragAffordance();
       }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [localQuery, searchQuery, onSearch]);
+    };
 
-  // 瀑布流布局 - 按列分组
-  const columnData = useMemo(() => {
-    const cols = Array.from({ length: columns }, () => []);
-    const colHeights = new Array(columns).fill(0);
+    window.addEventListener('blur', clearDragAffordance);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    mediaList.forEach((media) => {
-      // 找到最短的列
-      const shortestCol = colHeights.indexOf(Math.min(...colHeights));
-      cols[shortestCol].push(media);
-      // 估算高度（基于宽高比）
-      const aspectRatio = media.metadata?.width && media.metadata?.height
-        ? media.metadata.height / media.metadata.width
-        : 1;
-      colHeights[shortestCol] += aspectRatio * 100 + 80; // 80px 为信息区估算高度
-    });
+    return () => {
+      window.removeEventListener('blur', clearDragAffordance);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
-    return cols;
-  }, [mediaList, columns]);
+  React.useEffect(() => {
+    const resultIds = new Set((result.items || []).map((item) => item.id));
 
-  // 处理拖拽开始
-  const handleDragStart = useCallback((e, media) => {
-    e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('text/uri-list', `file://${media.filePath}`);
-    e.dataTransfer.setData('text/plain', media.filePath);
-
-    // 设置拖拽图像
-    if (media.thumbnailPath) {
-      const img = new Image();
-      img.src = media.thumbnailPath;
-      e.dataTransfer.setDragImage(img, 50, 50);
+    if (hoveredCardId && !resultIds.has(hoveredCardId)) {
+      setHoveredCardId(null);
     }
 
-    onDragStart?.(e, media);
-  }, [onDragStart]);
+    if (draggingCardId && !resultIds.has(draggingCardId)) {
+      setDraggingCardId(null);
+    }
+
+    if (dismissedCardId && !resultIds.has(dismissedCardId)) {
+      setDismissedCardId(null);
+    }
+  }, [dismissedCardId, draggingCardId, hoveredCardId, result.items]);
+
+  const cols = Array.from({ length: columnCount }, () => []);
+  (result.items || []).forEach((item, index) => {
+    cols[index % columnCount].push(item);
+  });
+
+  const handlePointerEnterCard = (cardId) => {
+    setHoveredCardId(cardId);
+  };
+
+  const handlePointerLeaveCard = (cardId) => {
+    setHoveredCardId((currentId) => (currentId === cardId ? null : currentId));
+    setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
+  };
+
+  const handleDragHandleStart = (cardId) => {
+    setDraggingCardId(cardId);
+    setHoveredCardId(cardId);
+    setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
+  };
+
+  const handleDragHandleEnd = (cardId) => {
+    setDraggingCardId((currentId) => (currentId === cardId ? null : currentId));
+    setHoveredCardId((currentId) => (currentId === cardId ? null : currentId));
+    setDismissedCardId(cardId);
+  };
 
   return (
-    <div className="flex h-full flex-col bg-[#f8faf6]">
-      {/* 语义搜索栏 - 核心卖点 */}
-      <div className="sticky top-0 z-10 px-6 py-4 bg-[#f8faf6]/95 backdrop-blur-sm border-b border-clay/10">
-        <div className="relative max-w-2xl mx-auto">
-          <div className="absolute left-4 top-1/2 -translate-y-1/2">
-            <Sparkles className="h-5 w-5 text-moss/60" />
-          </div>
-          <input
-            type="text"
-            value={localQuery}
-            onChange={(e) => setLocalQuery(e.target.value)}
-            placeholder="描述你想要的图片，例如：暖色调的日落海边照片..."
-            className={cn(
-              'w-full h-12 pl-12 pr-4',
-              'rounded-full border border-clay/20 bg-white',
-              'text-[14px] text-ink placeholder:text-ink/30',
-              'focus:outline-none focus:ring-2 focus:ring-moss/20 focus:border-moss/30',
-              'transition-all duration-200'
-            )}
-          />
-          {localQuery && (
-            <button
-              onClick={() => setLocalQuery('')}
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-clay/20 text-ink/40"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
-          {!localQuery && (
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-              <span className="text-[11px] text-ink/30 hidden sm:inline">语义搜索</span>
-              <div className="flex items-center justify-center h-6 w-6 rounded-md bg-moss/10">
-                <Search className="h-3 w-3 text-moss" />
-              </div>
+    <div className="flex h-full min-h-0 flex-col bg-[#f9faf7]">
+      <div className="flex-none border-b border-clay/10 bg-white/50 px-6 py-5 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-2xl items-center gap-3">
+          <div className="relative flex-1">
+            <div className="pointer-events-none absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2 text-moss">
+              <Sparkles className="h-4 w-4" />
             </div>
-          )}
+            <input
+              type="text"
+              value={queryDraft}
+              onChange={(event) => onQueryDraftChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  onSubmitSearch();
+                }
+              }}
+              className="h-12 w-full rounded-xl border-0 bg-white pl-11 pr-4 text-[15px] text-ink shadow-sm ring-1 ring-clay/20 placeholder:text-ink/30 focus:ring-2 focus:ring-moss/30"
+              placeholder="输入描述性关键词，语义搜索..."
+            />
+            {queryDraft ? (
+              <button
+                onClick={() => onQueryDraftChange('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-ink/30 transition hover:bg-clay/10 hover:text-ink/50"
+              >
+                <RefreshCcw className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+
+          <button
+            onClick={onRefresh}
+            className="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-ink/40 shadow-sm ring-1 ring-clay/20 transition hover:bg-white hover:text-ink/60"
+          >
+            <RefreshCcw className="h-4 w-4" />
+          </button>
         </div>
+
+        {!queryDraft && !hasTagFilter ? (
+          <div className="mx-auto mt-3 flex max-w-2xl items-center gap-2 text-[11px] text-ink/30">
+            <span>试试：</span>
+            <button
+              onClick={() => onQueryDraftChange('阳光明媚的海滩')}
+              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+            >
+              阳光明媚的海滩
+            </button>
+            <button
+              onClick={() => onQueryDraftChange('科技感产品图')}
+              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+            >
+              科技感产品图
+            </button>
+            <button
+              onClick={() => onQueryDraftChange('温暖的室内')}
+              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+            >
+              温暖的室内
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {/* 素材网格 - Pinterest 瀑布流 */}
-      <div ref={containerRef} className="flex-1 overflow-y-auto">
-        <div className="px-4 py-4">
-          {mediaList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-              <div className="h-16 w-16 rounded-2xl bg-clay/10 flex items-center justify-center mb-4">
-                <ImageIcon className="h-8 w-8 text-ink/20" />
+      <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+        {selectedTag ? (
+          <div className="mb-3 flex items-center gap-2">
+            <Badge variant="secondary" className="bg-moss/10 text-moss">
+              {selectedTag}
+            </Badge>
+            <button
+              onClick={onClearTag}
+              className="text-xs text-ink/40 transition hover:text-ink/70"
+            >
+              清除
+            </button>
+          </div>
+        ) : null}
+
+        {result.items.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
+                <Search className="h-6 w-6 text-ink/20" />
               </div>
-              <p className="text-[14px] text-ink/50 mb-1">
-                {searchQuery ? '没有找到匹配的素材' : '暂无素材'}
-              </p>
-              <p className="text-[12px] text-ink/30">
-                {searchQuery ? '尝试其他关键词' : '点击左侧导入按钮添加图片'}
-              </p>
+              <p className="text-sm text-ink/40">暂无结果</p>
+              <p className="mt-1 text-xs text-ink/30">尝试语义描述或从左侧选择标签</p>
             </div>
-          ) : (
-            <div className="flex gap-4">
-              {columnData.map((column, colIndex) => (
-                <div key={colIndex} className="flex-1 flex flex-col gap-4 min-w-0">
-                  {column.map((media) => (
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="flex items-start gap-3">
+              {cols.map((columnItems, colIndex) => (
+                <div key={colIndex} className="flex flex-1 flex-col gap-3">
+                  {columnItems.map((item) => (
                     <GalleryCard
-                      key={media.id}
-                      media={media}
-                      selected={selectedId === media.id}
-                      onClick={onSelectMedia}
-                      onDragStart={handleDragStart}
-                      onDragEnd={onDragEnd}
+                      key={item.id}
+                      item={item}
+                      active={item.id === selectedImageId}
+                      onClick={() => onSelectImage(item.id)}
+                      dragAffordanceVisible={
+                        item.id === draggingCardId
+                        || (item.id === hoveredCardId && item.id !== dismissedCardId)
+                      }
+                      onPointerEnterCard={handlePointerEnterCard}
+                      onPointerLeaveCard={handlePointerLeaveCard}
+                      onDragHandleStart={handleDragHandleStart}
+                      onDragHandleEnd={handleDragHandleEnd}
                     />
                   ))}
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* 底部分析状态 */}
-      {isAnalyzing && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-moss/90 text-white shadow-lg">
-            <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-            <span className="text-[12px]">AI 正在分析图片...</span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

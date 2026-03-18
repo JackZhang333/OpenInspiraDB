@@ -20,10 +20,10 @@ import {
   removeFileIfExists,
 } from '../utils/files.js';
 import { md5File } from '../utils/hash.js';
-import { embedTextMock, cosineSimilarity } from '../utils/vector.js';
+import { cosineSimilarity } from '../utils/vector.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
 import { createLogger } from '../utils/logger.js';
-import { MockAiService } from '../services/mock-ai.js';
+import { RoutedAiService } from '../services/ai-factory.js';
 import { AnalysisQueue } from '../services/analysis-queue.js';
 
 function resolveExistingFilePath(filePath) {
@@ -100,7 +100,7 @@ export class InspiraDBApp {
     this.db = new InspiraDatabase(this.paths.dbPath);
     this.db.ensureSettings(this.paths.libraryRootPath);
 
-    this.aiService = new MockAiService(this.db, this.logger);
+    this.aiService = new RoutedAiService(this.db, this.logger);
     this.queue = new AnalysisQueue({
       db: this.db,
       aiService: this.aiService,
@@ -422,7 +422,7 @@ export class InspiraDBApp {
     return { jobId, status: JOB_STATUS.PENDING };
   }
 
-  searchImages(query = '', selectedTags = [], pagination = {}) {
+  async searchImages(query = '', selectedTags = [], pagination = {}) {
     const cleanQuery = String(query || '').trim();
     const tags = uniqueNonEmptyTags(selectedTags || []);
     const page = Number(pagination.page || 1);
@@ -442,7 +442,7 @@ export class InspiraDBApp {
       };
     }
 
-    const queryVector = embedTextMock(cleanQuery);
+    const queryVector = await this.aiService.embedText(cleanQuery);
     const scored = [];
 
     for (const image of candidates) {
@@ -823,5 +823,130 @@ export class InspiraDBApp {
       imageId,
       status: IMAGE_STATUS.QUEUED,
     };
+  }
+
+  getFilterTags(query = '') {
+    const cleanQuery = String(query || '').trim();
+    const params = {};
+    let whereClause = '';
+
+    if (cleanQuery) {
+      whereClause = 'WHERE t.name LIKE :query';
+      params.query = `%${cleanQuery}%`;
+    }
+
+    return this.db.all(
+      `SELECT t.name, COUNT(DISTINCT it.image_id) AS count
+       FROM tags t
+       LEFT JOIN image_tags it ON it.tag_id = t.id
+       ${whereClause}
+       GROUP BY t.id, t.name
+       ORDER BY count DESC, t.name ASC
+       LIMIT 50`,
+      params,
+    );
+  }
+
+  getAppSettings() {
+    const settings = this.db.ensureSettings(this.paths.libraryRootPath);
+    return {
+      provider: settings.api_provider || 'zhipu',
+      apiKey: settings.api_key_ref || '',
+      cloudAnalysisEnabled: Boolean(settings.cloud_analysis_enabled),
+      libraryRootPath: settings.library_root_path || this.paths.libraryRootPath,
+    };
+  }
+
+  async updateAppSettings(payload = {}) {
+    const current = this.db.ensureSettings(this.paths.libraryRootPath);
+    const now = nowIso();
+    const provider = String(payload.provider || current.api_provider || 'zhipu').trim() || 'zhipu';
+    const apiKey = String(payload.apiKey ?? current.api_key_ref ?? '').trim();
+    const cloudAnalysisEnabled = payload.cloudAnalysisEnabled == null
+      ? Number(current.cloud_analysis_enabled || 0)
+      : payload.cloudAnalysisEnabled
+        ? 1
+        : 0;
+
+    this.db.run(
+      `UPDATE app_settings
+       SET api_provider = :provider,
+           api_key_ref = :apiKey,
+           cloud_analysis_enabled = :cloudAnalysisEnabled,
+           updated_at = :updatedAt
+       WHERE id = :id`,
+      {
+        id: current.id,
+        provider,
+        apiKey,
+        cloudAnalysisEnabled,
+        updatedAt: now,
+      },
+    );
+
+    const providerChanged = String(current.api_provider || '') !== provider;
+    const apiKeyChanged = String(current.api_key_ref || '') !== apiKey;
+    if (providerChanged || apiKeyChanged) {
+      await this.resyncAllImagesForProviderChange(provider);
+    }
+
+    return this.getAppSettings();
+  }
+
+  async resyncAllImagesForProviderChange(provider) {
+    const rows = this.db.all(
+      `SELECT i.id, c.source AS caption_source, c.model_provider
+       FROM images i
+       LEFT JOIN captions c ON c.id = i.active_caption_id
+       WHERE i.active_caption_id IS NOT NULL`,
+    );
+
+    if (!rows.length) {
+      return { reanalyzeCount: 0, refreshEmbeddingCount: 0 };
+    }
+
+    let reanalyzeCount = 0;
+    let refreshEmbeddingCount = 0;
+
+    this.db.transaction(() => {
+      const now = nowIso();
+      for (const row of rows) {
+        const shouldReanalyze = row.caption_source === 'ai'
+          && String(row.model_provider || '').trim()
+          && String(row.model_provider || '').trim() !== provider;
+
+        this.createAnalysisJob(row.id, {
+          jobType: shouldReanalyze ? 'analyze_image' : 'refresh_embedding',
+          maxRetryCount: 2,
+          asTransaction: true,
+        });
+
+        this.db.run(
+          `UPDATE images
+           SET needs_embedding_refresh = 1,
+               analysis_status = CASE
+                 WHEN :shouldReanalyze = 1 THEN :queued
+                 ELSE analysis_status
+               END,
+               updated_at = :updatedAt
+           WHERE id = :imageId`,
+          {
+            imageId: row.id,
+            shouldReanalyze: shouldReanalyze ? 1 : 0,
+            queued: IMAGE_STATUS.QUEUED,
+            updatedAt: now,
+          },
+        );
+
+        if (shouldReanalyze) {
+          reanalyzeCount += 1;
+        } else {
+          refreshEmbeddingCount += 1;
+        }
+      }
+    });
+
+    await this.queue.drain();
+    return { reanalyzeCount, refreshEmbeddingCount };
   }
 }

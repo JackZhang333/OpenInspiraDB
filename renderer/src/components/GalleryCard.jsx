@@ -1,141 +1,177 @@
-import React, { useState, useCallback } from 'react';
-import { cn } from '../lib/utils.js';
+import React from 'react';
 import { GripVertical } from 'lucide-react';
+import { cn } from '../lib/utils.js';
+
+const DRAG_AFFORDANCE_HIDE_DELAY_MS = 100;
 
 export function GalleryCard({
-  media,
-  selected,
+  item,
+  active,
   onClick,
-  onDragStart,
-  onDragEnd,
-  style,
+  dragAffordanceVisible,
+  onPointerEnterCard,
+  onPointerLeaveCard,
+  onDragHandleStart,
+  onDragHandleEnd,
 }) {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [imageError, setImageError] = useState(false);
+  const captionText = item.activeCaption?.content?.trim();
+  const filePath = String(item.library_path || '').trim();
+  const canDragToExternal = Boolean(filePath);
+  const [showDragAffordance, setShowDragAffordance] = React.useState(false);
+  const hideTimerRef = React.useRef(null);
 
-  // 拖拽开始
-  const handleDragStart = useCallback((e) => {
-    setIsDragging(true);
-    onDragStart?.(e, media);
-  }, [media, onDragStart]);
+  React.useEffect(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
 
-  // 拖拽结束
-  const handleDragEnd = useCallback((e) => {
-    setIsDragging(false);
-    onDragEnd?.(e, media);
-  }, [media, onDragEnd]);
+    if (!canDragToExternal) {
+      setShowDragAffordance(false);
+      return undefined;
+    }
 
-  // 计算标签显示 - 尽可能显示在一行
-  const renderTags = () => {
-    if (!media.tags || media.tags.length === 0) return null;
-    return (
-      <div className="flex flex-wrap gap-1">
-        {media.tags.slice(0, 4).map((tag) => (
-          <span
-            key={tag}
-            className="truncate max-w-[80px] text-[10px] px-1.5 py-0.5 bg-white/90 text-ink/60 rounded"
-          >
-            {tag}
-          </span>
-        ))}
-        {media.tags.length > 4 && (
-          <span className="text-[10px] px-1.5 py-0.5 bg-white/90 text-ink/40 rounded">
-            +{media.tags.length - 4}
-          </span>
-        )}
-      </div>
-    );
+    if (dragAffordanceVisible) {
+      setShowDragAffordance(true);
+      return undefined;
+    }
+
+    hideTimerRef.current = setTimeout(() => {
+      setShowDragAffordance(false);
+      hideTimerRef.current = null;
+    }, DRAG_AFFORDANCE_HIDE_DELAY_MS);
+
+    return () => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+    };
+  }, [canDragToExternal, dragAffordanceVisible]);
+
+  const handleDragStart = (event) => {
+    if (!canDragToExternal) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', item.original_file_name || 'image');
+
+    const startDragImage = window?.inspira?.startDragImage;
+    if (typeof startDragImage === 'function') {
+      startDragImage(filePath, item.thumbnail_path || filePath);
+    }
+  };
+
+  const handleHandleDragStart = (event) => {
+    onDragHandleStart?.(item.id);
+    handleDragStart(event);
+    if (event.defaultPrevented) {
+      onDragHandleEnd?.(item.id);
+    }
+  };
+
+  const handleHandleDragEnd = () => {
+    onDragHandleEnd?.(item.id);
   };
 
   return (
     <div
-      className={cn(
-        'group relative mb-4 break-inside-avoid cursor-pointer',
-        isDragging && 'opacity-50'
-      )}
-      style={style}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onClick={(e) => {
-        // 点击非拖拽区域才触发详情
-        if (!e.target.closest('.drag-handle')) {
-          onClick?.(media);
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick?.();
         }
       }}
+      onPointerEnter={() => onPointerEnterCard?.(item.id)}
+      onPointerLeave={() => onPointerLeaveCard?.(item.id)}
+      aria-label={item.original_file_name}
+      className={cn(
+        'group relative flex cursor-pointer flex-col overflow-hidden rounded-xl bg-white transition-all duration-300',
+        'shadow-sm hover:shadow-lg',
+        active ? 'ring-2 ring-moss shadow-lg' : 'hover:-translate-y-1 hover:scale-[1.02]',
+      )}
     >
-      {/* 图片容器 */}
-      <div className="relative overflow-hidden rounded-xl bg-clay/10">
-        {/* 图片 */}
-        {!imageError ? (
+      <div className="relative w-full overflow-hidden bg-clay/5">
+        {item.thumbnail_data_url ? (
           <img
-            src={media.thumbnailPath || media.filePath}
-            alt={media.caption || '图片'}
-            className="w-full h-auto object-cover transition-transform duration-300 group-hover:scale-105"
-            draggable={false}
-            onError={() => setImageError(true)}
+            src={item.thumbnail_data_url}
+            alt={item.original_file_name}
+            className="h-auto w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="lazy"
           />
         ) : (
-          <div className="w-full aspect-square bg-clay/20 flex items-center justify-center">
-            <span className="text-ink/30 text-xs">加载失败</span>
+          <div className="flex aspect-[4/3] items-center justify-center text-xs text-ink/30">
+            无缩略图
           </div>
         )}
 
-        {/* 拖拽手柄 - 悬停显示 */}
-        <div
-          className={cn(
-            'drag-handle absolute top-2 right-2 z-20',
-            'flex items-center justify-center',
-            'h-8 w-8 rounded-lg bg-white/95 shadow-sm',
-            'transition-all duration-200',
-            isHovered || isDragging
-              ? 'opacity-100 translate-y-0'
-              : 'opacity-0 -translate-y-2 pointer-events-none'
-          )}
-          draggable
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          title="拖拽到设计软件"
-        >
-          <GripVertical className="h-4 w-4 text-ink/60" />
-        </div>
+        <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/5" />
 
-        {/* 选中状态覆盖 */}
-        {selected && (
-          <div className="absolute inset-0 ring-2 ring-moss ring-inset rounded-xl">
-            <div className="absolute top-2 left-2 h-5 w-5 rounded-full bg-moss flex items-center justify-center">
-              <svg className="h-3 w-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+        {canDragToExternal ? (
+          <div className="pointer-events-none absolute right-2 top-2 z-10 flex items-center gap-1.5">
+            <span
+              className={cn(
+                'rounded-md bg-ink/75 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-white transition-all duration-200',
+                showDragAffordance ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0',
+              )}
+            >
+              拖拽
+            </span>
+            <div
+              draggable
+              onDragStart={handleHandleDragStart}
+              onDragEnd={handleHandleDragEnd}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              title="从这里拖到 Figma / Photoshop / Sketch"
+              aria-label="拖拽图片到外部设计工具"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-ink/60 shadow-md ring-1 ring-black/5',
+                'cursor-grab transition-all duration-200 active:cursor-grabbing',
+                showDragAffordance
+                  ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
+                  : 'pointer-events-none translate-y-1 scale-95 opacity-0',
+                'hover:scale-105 hover:text-moss',
+              )}
+            >
+              <GripVertical className="h-4 w-4" />
             </div>
           </div>
-        )}
-
-        {/* AI 分析状态指示 */}
-        {media.status === 'analyzing' && (
-          <div className="absolute inset-0 bg-black/20 flex items-center justify-center rounded-xl">
-            <div className="h-6 w-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-          </div>
-        )}
-        {media.status === 'failed' && (
-          <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-rose-500/90 text-white text-[10px] font-medium">
-            分析失败
-          </div>
-        )}
+        ) : null}
       </div>
 
-      {/* 信息区 */}
-      <div className="mt-2 px-0.5">
-        {/* 标题/描述 */}
-        {media.caption && (
-          <p className="text-[12px] text-ink/70 line-clamp-2 leading-relaxed mb-1">
-            {media.caption}
-          </p>
-        )}
+      {captionText || item.tags?.length > 0 ? (
+        <div className="p-2.5">
+          {captionText ? (
+            <p className="line-clamp-2 text-xs leading-relaxed text-ink/80 group-hover:text-moss">
+              {captionText}
+            </p>
+          ) : null}
 
-        {/* 标签 */}
-        {renderTags()}
-      </div>
+          {item.tags?.length > 0 ? (
+            <div className="mt-1.5 flex items-center gap-1 overflow-hidden">
+              <div className="flex flex-nowrap items-center gap-1 overflow-hidden">
+                {item.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="shrink-0 rounded-full bg-clay/10 px-1.5 py-0.5 text-[9px] text-ink/50"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -94,7 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_analysis_jobs_image_id ON analysis_jobs(image_id)
 
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  api_provider TEXT NOT NULL DEFAULT 'mock',
+  api_provider TEXT NOT NULL DEFAULT 'zhipu',
   api_key_ref TEXT,
   cloud_analysis_enabled INTEGER NOT NULL DEFAULT 0,
   library_root_path TEXT NOT NULL,
@@ -161,7 +161,7 @@ export class InspiraDatabase {
         created_at,
         updated_at
       ) VALUES (
-        'mock',
+        'zhipu',
         0,
         :libraryRootPath,
         :now,
