@@ -4,8 +4,8 @@ This project includes a basic `electron-builder` setup for Mac App Store packagi
 
 ## What is configured
 
-- `npm run dist:mas-dev`: build a local development-signed Mac App Store package using `electron-builder.mas-dev.cjs`
-- `npm run dist:mas`: build a distribution-signed `mas` package for upload
+- `npm run dist:mas-dev`: build a local development-signed universal (`x86_64 + arm64`) Mac App Store package using `electron-builder.mas-dev.cjs`
+- `npm run dist:mas`: build a distribution-signed universal (`x86_64 + arm64`) `mas` package for upload
 - `npm run dist:dmg`: build a DMG package for direct distribution
 - `npm run icon:mac`: generate `build/icon.icns` from `build/icon-1024.png`
 - `build/entitlements.mas.plist`: main app entitlements
@@ -20,6 +20,7 @@ This project includes a basic `electron-builder` setup for Mac App Store packagi
 4. Create signing identities in Keychain Access:
    - Apple Development
    - Apple Distribution
+   - 3rd Party Mac Developer Installer
 5. Create Mac App Store provisioning profiles for:
    - development (`mas-dev`)
    - distribution (`mas`)
@@ -37,6 +38,8 @@ npm run dist:mas-dev
 ```
 
 Before running `npm run dist:mas-dev`, copy your installed Mac App Store development provisioning profile to `build/profiles/mas-dev.provisionprofile`. This path is local-only because the whole `build/` directory is ignored by git.
+
+The signed development app bundle will be emitted to `release/mas-universal/InspiraDB.app`.
 
 Then open the generated app from the `release/` directory and verify:
 
@@ -59,6 +62,14 @@ If you only want to validate the packaging flow on a machine without signing cer
 ```bash
 npm run dist:dmg:unsigned
 ```
+
+## MAS distribution note
+
+`npm run dist:mas` now uses `scripts/build-mas.mjs`, which delegates app signing to `electron-builder.mas.cjs` and then falls back to a local `productbuild` step to produce the final installer. It expects a local distribution profile at `build/profiles/mas.provisionprofile`.
+
+The current verified requirement for this machine is the installer signing identity `3rd Party Mac Developer Installer`. The app bundle is signed with `Apple Distribution`, and the final `.pkg` is produced by `productbuild` using the installer certificate.
+
+The signed distribution app bundle is emitted to `release/mas-universal/InspiraDB.app`, and the uploadable installer is emitted to `release/InspiraDB-0.2.0-universal.pkg`.
 
 ## App Review checklist
 

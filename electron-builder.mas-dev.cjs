@@ -6,7 +6,7 @@ module.exports = {
     ...build.mac,
     type: "development",
     provisioningProfile: "build/profiles/mas-dev.provisionprofile",
-    target: ["mas"],
+    target: [{ target: "mas", arch: ["universal"] }],
   },
   mas: {
     ...(build.mas || {}),

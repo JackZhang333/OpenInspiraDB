@@ -8,12 +8,11 @@ module.exports = {
     ...build.mac,
     identity: distributionIdentity,
     provisioningProfile: "build/profiles/mas.provisionprofile",
-    target: ["mas"],
+    target: [{ target: "mas", arch: ["universal"] }],
     type: "distribution",
   },
   mas: {
     ...(build.mas || {}),
-    identity: distributionIdentity,
     provisioningProfile: "build/profiles/mas.provisionprofile",
     type: "distribution",
   },
