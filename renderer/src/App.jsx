@@ -21,9 +21,13 @@ export default function App() {
     detailLoading,
     saving,
     error,
+    loading,
+    page,
+    pageSize,
     setQuery,
     runSearch,
     refreshSearch,
+    loadMore,
     selectTag,
     clearTag,
     importFolder,
@@ -59,6 +63,14 @@ export default function App() {
     setQuery(queryDraft);
     runSearch();
   };
+
+  const handleLoadMore = () => {
+    if (!loading) {
+      loadMore();
+    }
+  };
+
+  const hasMore = result.items.length < result.total;
 
   const handleSaveSettings = async (payload) => {
     await saveSettings(payload);
@@ -109,6 +121,9 @@ export default function App() {
               result={result}
               selectedImageId={selectedImageId}
               onSelectImage={selectImage}
+              loading={loading}
+              hasMore={hasMore}
+              onLoadMore={handleLoadMore}
             />
           </div>
         </section>

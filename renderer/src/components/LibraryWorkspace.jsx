@@ -1,7 +1,7 @@
-import React from 'react';
-import { RefreshCcw, Search, Sparkles, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, RefreshCcw, Search, Sparkles, X } from 'lucide-react';
 import { Badge } from './ui/badge.jsx';
-import { GalleryCard } from './GalleryCard.jsx';
+import { GalleryCard, GalleryCardSkeleton } from './GalleryCard.jsx';
 
 export function LibraryWorkspace({
   queryDraft,
@@ -13,13 +13,75 @@ export function LibraryWorkspace({
   result,
   selectedImageId,
   onSelectImage,
+  loading = false,
+  hasMore = false,
+  onLoadMore,
 }) {
   const hasTagFilter = Boolean(selectedTag);
-  const [columnCount, setColumnCount] = React.useState(5);
-  const [hoveredCardId, setHoveredCardId] = React.useState(null);
-  const [dismissedCardId, setDismissedCardId] = React.useState(null);
+  const [columnCount, setColumnCount] = useState(5);
+  const [hoveredCardId, setHoveredCardId] = useState(null);
+  const [dismissedCardId, setDismissedCardId] = useState(null);
+  const [visibleItemIds, setVisibleItemIds] = useState(new Set());
+  const observerRef = useRef(null);
+  const loadMoreRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
-  React.useEffect(() => {
+  // Intersection Observer for lazy loading card images
+  const observeItem = useCallback((element, itemId) => {
+    if (!observerRef.current) {
+      observerRef.current = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              const id = entry.target.dataset.itemId;
+              if (id) {
+                setVisibleItemIds((prev) => new Set(prev).add(id));
+              }
+            }
+          });
+        },
+        { root: scrollContainerRef.current, rootMargin: '100px' }
+      );
+    }
+    if (element) {
+      element.dataset.itemId = itemId;
+      observerRef.current.observe(element);
+    }
+  }, []);
+
+  const unobserveItem = useCallback((element) => {
+    if (observerRef.current && element) {
+      observerRef.current.unobserve(element);
+    }
+  }, []);
+
+  // Cleanup observer on unmount
+  useEffect(() => {
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, []);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    if (!loadMoreRef.current || !hasMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loading && onLoadMore) {
+          onLoadMore();
+        }
+      },
+      { root: scrollContainerRef.current, threshold: 0.1 }
+    );
+
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loading, onLoadMore]);
+
+  useEffect(() => {
     const updateCount = () => {
       const width = window.innerWidth;
       if (width >= 2560) setColumnCount(7);
@@ -36,7 +98,7 @@ export function LibraryWorkspace({
     return () => window.removeEventListener('resize', updateCount);
   }, []);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         setHoveredCardId(null);
@@ -50,7 +112,7 @@ export function LibraryWorkspace({
     };
   }, []);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const resultIds = new Set((result.items || []).map((item) => item.id));
 
     if (hoveredCardId && !resultIds.has(hoveredCardId)) {
@@ -62,19 +124,38 @@ export function LibraryWorkspace({
     }
   }, [dismissedCardId, hoveredCardId, result.items]);
 
-  const cols = Array.from({ length: columnCount }, () => []);
-  (result.items || []).forEach((item, index) => {
-    cols[index % columnCount].push(item);
-  });
+  // Reset visible items when result changes significantly
+  useEffect(() => {
+    setVisibleItemIds(new Set());
+  }, [result.items.length === 0]);
 
-  const handlePointerEnterCard = (cardId) => {
+  const handlePointerEnterCard = useCallback((cardId) => {
     setHoveredCardId(cardId);
-  };
+  }, []);
 
-  const handlePointerLeaveCard = (cardId) => {
+  const handlePointerLeaveCard = useCallback((cardId) => {
     setHoveredCardId((currentId) => (currentId === cardId ? null : currentId));
     setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
-  };
+  }, []);
+
+  // Distribute items into columns
+  const columns = useMemo(() => {
+    const cols = Array.from({ length: columnCount }, () => []);
+    (result.items || []).forEach((item, index) => {
+      cols[index % columnCount].push(item);
+    });
+    return cols;
+  }, [result.items, columnCount]);
+
+  // Skeleton columns for loading state
+  const skeletonColumns = useMemo(() => {
+    const cols = Array.from({ length: columnCount }, () => []);
+    const skeletonCount = columnCount * 3; // 3 skeletons per column
+    Array.from({ length: skeletonCount }).forEach((_, index) => {
+      cols[index % columnCount].push(index);
+    });
+    return cols;
+  }, [columnCount]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#f9faf7]">
@@ -154,7 +235,23 @@ export function LibraryWorkspace({
           </div>
         ) : null}
 
-        {result.items.length === 0 ? (
+        {/* Loading State - Skeleton */}
+        {loading && result.items.length === 0 && (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-start gap-3">
+              {skeletonColumns.map((columnItems, colIndex) => (
+                <div key={colIndex} className="flex flex-1 flex-col gap-3">
+                  {columnItems.map((index) => (
+                    <GalleryCardSkeleton key={index} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && result.items.length === 0 && (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
               <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
@@ -164,16 +261,22 @@ export function LibraryWorkspace({
               <p className="mt-1 text-xs text-ink/30">尝试语义描述或从左侧选择标签</p>
             </div>
           </div>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-auto">
+        )}
+
+        {/* Gallery Grid */}
+        {result.items.length > 0 && (
+          <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
             <div className="flex items-start gap-3">
-              {cols.map((columnItems, colIndex) => (
+              {columns.map((columnItems, colIndex) => (
                 <div key={colIndex} className="flex flex-1 flex-col gap-3">
                   {columnItems.map((item) => (
                     <GalleryCard
                       key={item.id}
                       item={item}
                       active={item.id === selectedImageId}
+                      visible={visibleItemIds.has(String(item.id))}
+                      onObserve={observeItem}
+                      onUnobserve={unobserveItem}
                       onClick={() => onSelectImage(item.id)}
                       onPointerEnterCard={handlePointerEnterCard}
                       onPointerLeaveCard={handlePointerLeaveCard}
@@ -182,6 +285,36 @@ export function LibraryWorkspace({
                 </div>
               ))}
             </div>
+
+            {/* Load More Sentinel */}
+            {hasMore && (
+              <div
+                ref={loadMoreRef}
+                className="flex items-center justify-center py-6"
+              >
+                <div className="flex items-center gap-2 text-sm text-ink/40">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>加载更多...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Loading More Indicator */}
+            {loading && hasMore && (
+              <div className="flex items-center justify-center py-4">
+                <div className="flex items-center gap-2 text-sm text-ink/40">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>加载中...</span>
+                </div>
+              </div>
+            )}
+
+            {/* End of Results */}
+            {!hasMore && result.items.length > 0 && (
+              <div className="flex items-center justify-center py-6 text-xs text-ink/30">
+                已加载全部 {result.total} 张图片
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -10,7 +10,6 @@ import {
   AlertCircle,
   Loader2,
   Clock,
-  Ban,
   Copy,
   SkipForward,
 } from 'lucide-react';
@@ -177,10 +176,6 @@ export function AppSidebar({
   const importCurrent = phase === 'importing'
     ? clamp(current, 0, importTotal)
     : importTotal;
-  const analyzeTotal = importedCount;
-  const analyzeCurrent = phase === 'analyzing'
-    ? clamp(current, 0, total)
-    : clamp(readyCount + failedCount, 0, analyzeTotal || 0);
   const progressText = importing
     ? phase === 'analyzing'
       ? `${clamp(current, 0, total)}/${total}`
@@ -258,35 +253,94 @@ export function AppSidebar({
         </div>
 
         {!collapsed && isBatchImporting && (
-          <div className="mt-2 rounded-lg border border-moss/15 bg-moss/5 px-2.5 py-2">
-            <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-ink/70">
-              <span>{progress.phaseLabel || '批量导入进度'}</span>
-              <span>{progressText || '处理中'}</span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-moss/10">
-              <div
-                className="h-full rounded-full bg-moss/70 transition-[width] duration-300"
-                style={{ width: `${Math.max(0, Math.min(100, progress.ratio * 100))}%` }}
-              />
-            </div>
-            <div className="mt-1.5 space-y-1 text-[10px] leading-tight text-ink/60">
-              <div className="flex items-center justify-between">
-                <span>导入</span>
-                <span>{importCurrent}/{importTotal || 0}</span>
+          <div className="mt-2 rounded-xl border border-moss/15 bg-gradient-to-br from-moss/5 to-moss/[0.02] px-3 py-3">
+            {/* Phase indicator */}
+            <div className="mb-3 flex items-center gap-3">
+              <div className={cn(
+                'flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-colors',
+                phase === 'importing' ? 'bg-moss text-white' : 'bg-moss/20 text-moss'
+              )}>
+                1
               </div>
-              <div className="flex items-center justify-between">
-                <span>分析</span>
-                <span>{analyzeCurrent}/{analyzeTotal || 0}</span>
+              <div className="h-0.5 flex-1 rounded-full bg-moss/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-moss/40 transition-all duration-500"
+                  style={{ width: phase === 'importing' ? `${(importCurrent / Math.max(importTotal, 1)) * 100}%` : '100%' }}
+                />
+              </div>
+              <div className={cn(
+                'flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-colors',
+                phase === 'analyzing' ? 'bg-moss text-white' : phase === 'completed' ? 'bg-moss/20 text-moss' : 'bg-clay/20 text-ink/30'
+              )}>
+                2
               </div>
             </div>
-            <div className="mt-1.5 flex items-center gap-3 text-[10px] text-ink/55">
-              <span>成功 {importedCount}</span>
-              <span>就绪 {readyCount}</span>
-              <span>失败 {failedCount}</span>
-              <span>排队 {queuedCount}</span>
-              <span>分析中 {analyzingCount}</span>
-              <span>重复 {duplicateCount}</span>
-              <span>跳过 {skippedCount}</span>
+
+            {/* Overall progress */}
+            <div className="mb-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  {phase === 'analyzing' && <Loader2 className="h-3 w-3 animate-spin text-moss" />}
+                  {phase === 'completed' && <CheckCircle2 className="h-3 w-3 text-moss" />}
+                  {phase === 'importing' && <div className="h-3 w-3 rounded-full bg-moss/60" />}
+                  <span className="text-[11px] font-medium text-ink/70">
+                    {phase === 'importing' ? '导入文件' : phase === 'analyzing' ? 'AI分析中' : '已完成'}
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-moss">{progressText}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-moss/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-moss to-moss/80 transition-all duration-500 ease-out"
+                  style={{ width: `${Math.max(0, Math.min(100, progress.ratio * 100))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Status chips */}
+            <div className="flex flex-wrap gap-1.5">
+              {importedCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[10px] text-emerald-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span>{importedCount}</span>
+                </div>
+              )}
+              {readyCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[10px] text-blue-600">
+                  <Clock className="h-3 w-3" />
+                  <span>{readyCount}</span>
+                </div>
+              )}
+              {failedCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] text-rose-600">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>{failedCount}</span>
+                </div>
+              )}
+              {queuedCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[10px] text-amber-600">
+                  <Clock className="h-3 w-3" />
+                  <span>{queuedCount}</span>
+                </div>
+              )}
+              {analyzingCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-moss/10 px-2 py-1 text-[10px] text-moss">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>{analyzingCount}</span>
+                </div>
+              )}
+              {duplicateCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-1 text-[10px] text-purple-600">
+                  <Copy className="h-3 w-3" />
+                  <span>{duplicateCount}</span>
+                </div>
+              )}
+              {skippedCount > 0 && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
+                  <SkipForward className="h-3 w-3" />
+                  <span>{skippedCount}</span>
+                </div>
+              )}
             </div>
           </div>
         )}

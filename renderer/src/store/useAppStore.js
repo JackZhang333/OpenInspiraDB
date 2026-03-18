@@ -169,6 +169,13 @@ export const useAppStore = create((set, get) => ({
     return get().refreshSearch();
   },
 
+  async loadMore() {
+    const { loading, page } = get();
+    if (loading) return;
+    set({ page: page + 1 });
+    return get().refreshSearch();
+  },
+
   async refreshSearch() {
     const { query, selectedTag, page, pageSize, selectedImageId } = get();
     set({ loading: true, error: null });
@@ -181,8 +188,12 @@ export const useAppStore = create((set, get) => ({
         bridge.getFilterTags(query),
       ]);
 
+      const currentItems = page === 1 ? [] : get().result.items;
       set({
-        result,
+        result: {
+          ...result,
+          items: [...currentItems, ...result.items],
+        },
         availableTags,
         loading: false,
       });
