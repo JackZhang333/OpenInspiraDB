@@ -127,12 +127,12 @@ function registerIpcHandlers() {
       return { canceled: true };
     }
 
-    emitImportProgress({ mode: 'folder', phase: 'started', current: 0, total: 1 });
-
     try {
-      const summary = await inspiraApp.importFolder(result.filePaths[0]);
-      emitImportProgress({ mode: 'folder', phase: 'completed', current: 1, total: 1, ...summary });
-      return summary;
+      return await inspiraApp.importFolder(result.filePaths[0], {
+        onProgress(progress) {
+          emitImportProgress(progress);
+        },
+      });
     } catch (error) {
       emitImportProgress({ mode: 'folder', phase: 'error', message: String(error?.message || error) });
       throw error;
@@ -154,12 +154,65 @@ function registerIpcHandlers() {
 
     try {
       const importResult = await inspiraApp.importFile(result.filePaths[0]);
+      if (importResult?.status === 'imported' && importResult?.image?.id) {
+        emitImportProgress({
+          mode: 'single',
+          phase: 'analyzing',
+          current: 0,
+          total: 1,
+          readyCount: 0,
+          failedCount: 0,
+        });
+
+        await inspiraApp.waitForImportedImagesSettled([importResult.image.id], (progress) => {
+          emitImportProgress({
+            mode: 'single',
+            phase: 'analyzing',
+            ...progress,
+          });
+        });
+      }
+
       emitImportProgress({ mode: 'single', phase: 'completed', current: 1, total: 1, status: importResult?.status });
       return importResult;
     } catch (error) {
       emitImportProgress({ mode: 'single', phase: 'error', current: 1, total: 1, message: String(error?.message || error) });
       throw error;
     }
+  });
+
+  ipcMain.handle('inspiradb:export-image', async (_, imageId) => {
+    const detail = inspiraApp.getImageDetail(imageId);
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: '导出图片',
+      defaultPath: path.join(app.getPath('downloads'), detail.image.original_file_name),
+      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
+      showOverwriteConfirmation: true,
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { canceled: true };
+    }
+
+    return inspiraApp.exportImage(imageId, saveResult.filePath);
+  });
+
+  ipcMain.handle('inspiradb:export-images', async (_, payload = {}) => {
+    const imageIds = Array.isArray(payload.imageIds) ? payload.imageIds : [];
+    if (!imageIds.length) {
+      return { canceled: true, reason: 'EMPTY_EXPORT_SELECTION' };
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择导出目录',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      return { canceled: true };
+    }
+
+    return inspiraApp.exportImages(imageIds, result.filePaths[0]);
   });
 
   ipcMain.handle('inspiradb:search', async (_, payload = {}) => {

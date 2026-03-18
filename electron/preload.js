@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('inspira', {
+  invoke(channel, payload) {
+    return ipcRenderer.invoke(channel, payload);
+  },
   onImportProgress(callback) {
     if (typeof callback !== 'function') {
       return () => {};
@@ -20,6 +23,12 @@ contextBridge.exposeInMainWorld('inspira', {
   },
   importFile() {
     return ipcRenderer.invoke('inspiradb:import-file');
+  },
+  exportImage(imageId) {
+    return ipcRenderer.invoke('inspiradb:export-image', imageId);
+  },
+  exportImages(imageIds) {
+    return ipcRenderer.invoke('inspiradb:export-images', { imageIds });
   },
   search(payload) {
     return ipcRenderer.invoke('inspiradb:search', payload);

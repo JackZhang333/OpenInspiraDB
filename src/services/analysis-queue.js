@@ -225,6 +225,20 @@ export class AnalysisQueue {
           },
         );
       }
+
+      if (job.job_type === 'refresh_embedding') {
+        this.db.run(
+          `UPDATE images
+           SET analysis_status = :ready,
+               updated_at = :updatedAt
+           WHERE id = :imageId`,
+          {
+            ready: IMAGE_STATUS.READY,
+            updatedAt: now,
+            imageId: job.image_id,
+          },
+        );
+      }
     });
 
     this.logger.info('job-succeeded', { jobId: job.id, imageId: job.image_id, jobType: job.job_type });
@@ -358,9 +372,11 @@ export class AnalysisQueue {
         this.db.run(
           `UPDATE images
            SET needs_embedding_refresh = 1,
+               analysis_status = :failed,
                updated_at = :updatedAt
            WHERE id = :imageId`,
           {
+            failed: IMAGE_STATUS.FAILED,
             updatedAt: now,
             imageId: job.image_id,
           },

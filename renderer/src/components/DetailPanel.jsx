@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react';
+import { AlertCircle, Download, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react';
 import { Badge } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
 import { Input } from './ui/input.jsx';
@@ -26,6 +26,7 @@ export function DetailPanel({
   loading,
   saving,
   onSaveMetadata,
+  onExport,
   onReanalyze,
   onDelete,
 }) {
@@ -136,6 +137,10 @@ export function DetailPanel({
           <Button size="sm" onClick={handleSave} disabled={saving}>
             <Save className="mr-1.5 h-3.5 w-3.5" />
             {saving ? '保存中...' : '保存修改'}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => onExport?.(detail.image.id)} disabled={saving}>
+            <Download className="mr-1.5 h-3.5 w-3.5" />
+            导出图片
           </Button>
           <Button variant="secondary" size="sm" onClick={() => onReanalyze?.()} disabled={saving}>
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />

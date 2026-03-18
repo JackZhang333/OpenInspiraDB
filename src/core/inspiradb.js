@@ -22,6 +22,11 @@ import {
 import { md5File } from '../utils/hash.js';
 import { cosineSimilarity } from '../utils/vector.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
+import {
+  buildXmpSidecarPathForImage,
+  readXmpMetadataForImage,
+  writeXmpForImage,
+} from '../utils/xmp.js';
 import { createLogger } from '../utils/logger.js';
 import { RoutedAiService } from '../services/ai-factory.js';
 import { AnalysisQueue } from '../services/analysis-queue.js';
@@ -84,6 +89,40 @@ function buildInClauseParams(prefix, values) {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeImageIds(imageIds) {
+  return Array.from(
+    new Set(
+      (imageIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+}
+
+function sanitizeExportFileName(fileName, fallback = 'image.jpg') {
+  const cleaned = String(fileName || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_');
+  return cleaned || fallback;
+}
+
+function appendOriginalExtensionIfMissing(filePath, originalFileName) {
+  if (path.extname(filePath)) {
+    return filePath;
+  }
+
+  const originalExt = path.extname(String(originalFileName || '')).toLowerCase();
+  if (!originalExt) {
+    return filePath;
+  }
+
+  return `${filePath}${originalExt}`;
+}
+
 export class InspiraDBApp {
   constructor({ rootDir = process.cwd(), dbPath, libraryRootPath, thumbnailRootPath, autoStartQueue = true } = {}) {
     const defaults = defaultPaths(rootDir);
@@ -117,7 +156,22 @@ export class InspiraDBApp {
     this.db.close();
   }
 
-  async importFolder(folderPath) {
+  async importFolder(folderPath, options = {}) {
+    const reportProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    const emitProgress = (payload) => {
+      if (!reportProgress) {
+        return;
+      }
+
+      try {
+        reportProgress(payload);
+      } catch (error) {
+        this.logger.error('import-progress-callback-failed', {
+          error: String(error?.message || error),
+        });
+      }
+    };
+
     const resolvedFolder = resolveExistingFolderPath(folderPath);
     const files = walkFilesRecursive(resolvedFolder);
 
@@ -131,7 +185,18 @@ export class InspiraDBApp {
       skipped: [],
     };
 
-    for (const filePath of files) {
+    emitProgress({
+      mode: 'folder',
+      phase: 'importing',
+      current: 0,
+      total: files.length,
+      importedCount: 0,
+      duplicateCount: 0,
+      skippedCount: 0,
+    });
+
+    for (let index = 0; index < files.length; index += 1) {
+      const filePath = files[index];
       const result = await this.importFile(filePath, { sourceFolder: resolvedFolder, asStandalone: false });
       if (result.status === 'imported') {
         summary.importedCount += 1;
@@ -143,9 +208,115 @@ export class InspiraDBApp {
         summary.skippedCount += 1;
         summary.skipped.push(result);
       }
+
+      emitProgress({
+        mode: 'folder',
+        phase: 'importing',
+        current: index + 1,
+        total: files.length,
+        importedCount: summary.importedCount,
+        duplicateCount: summary.duplicateCount,
+        skippedCount: summary.skippedCount,
+        lastStatus: result.status,
+        filePath,
+      });
     }
 
+    const importedImageIds = summary.imported.map((item) => item.id).filter(Boolean);
+    if (importedImageIds.length > 0) {
+      await this.waitForImportedImagesSettled(importedImageIds, (analysisProgress) => {
+        emitProgress({
+          mode: 'folder',
+          phase: 'analyzing',
+          ...analysisProgress,
+          importedCount: summary.importedCount,
+          duplicateCount: summary.duplicateCount,
+          skippedCount: summary.skippedCount,
+        });
+      });
+    }
+
+    emitProgress({
+      mode: 'folder',
+      phase: 'completed',
+      current: summary.importedCount,
+      total: summary.importedCount,
+      importedCount: summary.importedCount,
+      duplicateCount: summary.duplicateCount,
+      skippedCount: summary.skippedCount,
+    });
+
     return summary;
+  }
+
+  async waitForImportedImagesSettled(imageIds, onProgress) {
+    const normalizedImageIds = normalizeImageIds(imageIds);
+    if (!normalizedImageIds.length) {
+      if (typeof onProgress === 'function') {
+        onProgress({
+          current: 0,
+          total: 0,
+          readyCount: 0,
+          failedCount: 0,
+          queuedCount: 0,
+          analyzingCount: 0,
+          importedCount: 0,
+        });
+      }
+      return;
+    }
+
+    const { clause, params } = buildInClauseParams('image', normalizedImageIds);
+    const query = `
+      SELECT analysis_status
+      FROM images
+      WHERE id IN (${clause})
+    `;
+
+    while (true) {
+      await this.queue.drain();
+
+      const rows = this.db.all(query, params);
+      let readyCount = 0;
+      let failedCount = 0;
+      let queuedCount = 0;
+      let analyzingCount = 0;
+      let importedCount = 0;
+
+      for (const row of rows) {
+        const status = String(row.analysis_status || '');
+        if (status === IMAGE_STATUS.READY) {
+          readyCount += 1;
+        } else if (status === IMAGE_STATUS.FAILED) {
+          failedCount += 1;
+        } else if (status === IMAGE_STATUS.ANALYZING) {
+          analyzingCount += 1;
+        } else if (status === IMAGE_STATUS.QUEUED) {
+          queuedCount += 1;
+        } else if (status === IMAGE_STATUS.IMPORTED) {
+          importedCount += 1;
+        }
+      }
+
+      const settledCount = readyCount + failedCount;
+      if (typeof onProgress === 'function') {
+        onProgress({
+          current: settledCount,
+          total: normalizedImageIds.length,
+          readyCount,
+          failedCount,
+          queuedCount,
+          analyzingCount,
+          importedCount,
+        });
+      }
+
+      if (settledCount >= normalizedImageIds.length) {
+        return;
+      }
+
+      await sleep(160);
+    }
   }
 
   async importFile(filePath, options = {}) {
@@ -202,6 +373,23 @@ export class InspiraDBApp {
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
     const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash);
     const now = nowIso();
+    let importedXmpMetadata = null;
+
+    try {
+      const xmpMetadata = readXmpMetadataForImage(resolved.filePath);
+      if (xmpMetadata.hasCaption && xmpMetadata.hasTags) {
+        importedXmpMetadata = {
+          caption: xmpMetadata.caption,
+          tags: xmpMetadata.tags,
+          source: xmpMetadata.source,
+        };
+      }
+    } catch (error) {
+      this.logger.error('xmp-read-failed', {
+        filePath: resolved.filePath,
+        error: String(error?.message || error),
+      });
+    }
 
     let imageId;
 
@@ -235,8 +423,8 @@ export class InspiraDBApp {
             NULL,
             NULL,
             'imported',
-            'queued',
-            'ai',
+            :analysisStatus,
+            :activeTagSource,
             :createdAt,
             :updatedAt
           )`,
@@ -247,6 +435,8 @@ export class InspiraDBApp {
             thumbnailPath,
             md5Hash,
             fileSize: resolved.stat.size,
+            analysisStatus: importedXmpMetadata ? IMAGE_STATUS.IMPORTED : IMAGE_STATUS.QUEUED,
+            activeTagSource: importedXmpMetadata ? 'user' : 'ai',
             createdAt: now,
             updatedAt: now,
           },
@@ -254,7 +444,51 @@ export class InspiraDBApp {
 
         imageId = Number(result.lastInsertRowid);
 
-        this.createAnalysisJob(imageId, { jobType: 'analyze_image', maxRetryCount: 2, asTransaction: true });
+        if (importedXmpMetadata) {
+          const captionInsert = this.db.run(
+            `INSERT INTO captions (
+              image_id,
+              content,
+              source,
+              is_active,
+              model_provider,
+              model_name,
+              created_at,
+              updated_at
+            ) VALUES (
+              :imageId,
+              :content,
+              'user',
+              1,
+              NULL,
+              NULL,
+              :createdAt,
+              :updatedAt
+            )`,
+            {
+              imageId,
+              content: importedXmpMetadata.caption,
+              createdAt: now,
+              updatedAt: now,
+            },
+          );
+
+          this.upsertImageTagsBySource(imageId, importedXmpMetadata.tags, 'user', now);
+
+          this.db.run(
+            `UPDATE images
+             SET active_caption_id = :captionId,
+                 updated_at = :updatedAt
+             WHERE id = :imageId`,
+            {
+              imageId,
+              captionId: Number(captionInsert.lastInsertRowid),
+              updatedAt: now,
+            },
+          );
+        } else {
+          this.createAnalysisJob(imageId, { jobType: 'analyze_image', maxRetryCount: 2, asTransaction: true });
+        }
       });
     } catch (error) {
       removeFileIfExists(libraryPath);
@@ -271,7 +505,42 @@ export class InspiraDBApp {
       };
     }
 
-    await this.queue.drain();
+    let embeddingStatus = null;
+    if (importedXmpMetadata) {
+      try {
+        this.syncImageMetadataToXmp(imageId);
+      } catch (error) {
+        this.logger.error('xmp-write-library-failed', {
+          imageId,
+          libraryPath,
+          error: String(error?.message || error),
+        });
+      }
+
+      const embeddingResult = await this.refreshEmbeddingWithFallback(imageId);
+      embeddingStatus = embeddingResult.embeddingStatus;
+
+      const nextStatus = embeddingResult.analysisStatus
+        || (embeddingResult.embeddingStatus === 'refreshed'
+          ? IMAGE_STATUS.READY
+          : embeddingResult.embeddingStatus === 'failed'
+            ? IMAGE_STATUS.FAILED
+            : IMAGE_STATUS.QUEUED);
+
+      this.db.run(
+        `UPDATE images
+         SET analysis_status = :analysisStatus,
+             updated_at = :updatedAt
+         WHERE id = :imageId`,
+        {
+          imageId,
+          analysisStatus: nextStatus,
+          updatedAt: nowIso(),
+        },
+      );
+    } else {
+      await this.queue.drain();
+    }
 
     return {
       status: 'imported',
@@ -282,6 +551,8 @@ export class InspiraDBApp {
         thumbnailPath,
         fileSize: resolved.stat.size,
       },
+      metadataSource: importedXmpMetadata ? importedXmpMetadata.source : null,
+      embeddingStatus,
       mode: options.asStandalone === false ? 'folder' : 'single',
     };
   }
@@ -596,6 +867,131 @@ export class InspiraDBApp {
     };
   }
 
+  upsertImageTagsBySource(imageId, tags, source, createdAt) {
+    const normalizedTags = uniqueNonEmptyTags(tags || []);
+
+    this.db.run(
+      `DELETE FROM image_tags
+       WHERE image_id = :imageId
+         AND source = :source`,
+      { imageId, source },
+    );
+
+    for (const tagName of normalizedTags) {
+      this.db.run(
+        `INSERT INTO tags (name, language, created_at)
+         VALUES (:name, 'zh', :createdAt)
+         ON CONFLICT(name, language) DO NOTHING`,
+        {
+          name: tagName,
+          createdAt,
+        },
+      );
+
+      const tag = this.db.get("SELECT id FROM tags WHERE name = :name AND language = 'zh'", {
+        name: tagName,
+      });
+
+      if (!tag) {
+        continue;
+      }
+
+      this.db.run(
+        `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+         VALUES (:imageId, :tagId, :source, :createdAt)
+         ON CONFLICT(image_id, tag_id, source) DO NOTHING`,
+        {
+          imageId,
+          tagId: tag.id,
+          source,
+          createdAt,
+        },
+      );
+    }
+
+    return normalizedTags;
+  }
+
+  getImageWritebackMetadata(imageId) {
+    const image = this.db.get('SELECT id, library_path, active_caption_id FROM images WHERE id = :imageId', { imageId });
+    if (!image) {
+      throw new Error('IMAGE_NOT_FOUND');
+    }
+
+    const caption = image.active_caption_id
+      ? this.db.get(
+        `SELECT content
+         FROM captions
+         WHERE id = :captionId`,
+        { captionId: image.active_caption_id },
+      )?.content || ''
+      : '';
+
+    const tags = this.getEffectiveTags(imageId);
+    return {
+      image,
+      caption: String(caption || '').trim(),
+      tags,
+    };
+  }
+
+  syncImageMetadataToXmp(imageId, targetImagePath = '') {
+    const metadata = this.getImageWritebackMetadata(imageId);
+    const outputPath = targetImagePath ? path.resolve(targetImagePath) : metadata.image.library_path;
+    const writeResult = writeXmpForImage(outputPath, {
+      caption: metadata.caption,
+      tags: metadata.tags,
+    });
+
+    return {
+      imageId,
+      outputPath,
+      sidecarPath: writeResult.sidecarPath || '',
+      embedded: Boolean(writeResult.embedded),
+      writeMode: writeResult.mode || (writeResult.sidecarPath ? 'sidecar' : 'embedded'),
+      caption: metadata.caption,
+      tags: metadata.tags,
+    };
+  }
+
+  async refreshEmbeddingWithFallback(imageId) {
+    try {
+      await this.aiService.refreshEmbedding(imageId);
+      return {
+        embeddingStatus: 'refreshed',
+        analysisStatus: IMAGE_STATUS.READY,
+      };
+    } catch (error) {
+      this.db.transaction(() => {
+        const now = nowIso();
+        this.db.run(
+          `UPDATE images
+           SET needs_embedding_refresh = 1,
+               updated_at = :updatedAt
+           WHERE id = :imageId`,
+          {
+            imageId,
+            updatedAt: now,
+          },
+        );
+
+        this.createAnalysisJob(imageId, {
+          jobType: 'refresh_embedding',
+          maxRetryCount: 2,
+          asTransaction: true,
+        });
+      });
+
+      await this.queue.drain();
+
+      return {
+        embeddingStatus: 'queued_for_refresh',
+        analysisStatus: IMAGE_STATUS.QUEUED,
+        errorCode: error?.code || 'EMBEDDING_REFRESH_FAILED',
+      };
+    }
+  }
+
   async updateImageCaption(imageId, content) {
     const cleanContent = String(content || '').trim();
     if (!cleanContent) {
@@ -656,43 +1052,21 @@ export class InspiraDBApp {
       );
     });
 
+    const embeddingResult = await this.refreshEmbeddingWithFallback(imageId);
+    let xmpSidecarPath = '';
     try {
-      await this.aiService.refreshEmbedding(imageId);
-      return { imageId, captionId, embeddingStatus: 'refreshed' };
+      xmpSidecarPath = this.syncImageMetadataToXmp(imageId).sidecarPath;
     } catch (error) {
-      this.db.transaction(() => {
-        const now = nowIso();
-        this.db.run(
-          `UPDATE images
-           SET needs_embedding_refresh = 1,
-               updated_at = :updatedAt
-           WHERE id = :imageId`,
-          {
-            imageId,
-            updatedAt: now,
-          },
-        );
-
-        this.createAnalysisJob(imageId, {
-          jobType: 'refresh_embedding',
-          maxRetryCount: 2,
-          asTransaction: true,
-        });
-      });
-
-      await this.queue.drain();
-
-      return {
+      this.logger.error('xmp-write-library-failed', {
         imageId,
-        captionId,
-        embeddingStatus: 'queued_for_refresh',
-        errorCode: error?.code || 'EMBEDDING_REFRESH_FAILED',
-      };
+        error: String(error?.message || error),
+      });
     }
+
+    return { imageId, captionId, ...embeddingResult, xmpSidecarPath };
   }
 
-  updateImageTags(imageId, tags) {
-    const normalizedTags = uniqueNonEmptyTags(tags || []);
+  async updateImageTags(imageId, tags) {
     const image = this.db.get('SELECT id FROM images WHERE id = :imageId', { imageId });
     if (!image) {
       throw new Error('IMAGE_NOT_FOUND');
@@ -700,36 +1074,7 @@ export class InspiraDBApp {
 
     this.db.transaction(() => {
       const now = nowIso();
-      this.db.run("DELETE FROM image_tags WHERE image_id = :imageId AND source = 'user'", { imageId });
-
-      for (const tagName of normalizedTags) {
-        this.db.run(
-          `INSERT INTO tags (name, language, created_at)
-           VALUES (:name, 'zh', :createdAt)
-           ON CONFLICT(name, language) DO NOTHING`,
-          {
-            name: tagName,
-            createdAt: now,
-          },
-        );
-
-        const tag = this.db.get("SELECT id FROM tags WHERE name = :name AND language = 'zh'", {
-          name: tagName,
-        });
-
-        if (tag) {
-          this.db.run(
-            `INSERT INTO image_tags (image_id, tag_id, source, created_at)
-             VALUES (:imageId, :tagId, 'user', :createdAt)
-             ON CONFLICT(image_id, tag_id, source) DO NOTHING`,
-            {
-              imageId,
-              tagId: tag.id,
-              createdAt: now,
-            },
-          );
-        }
-      }
+      this.upsertImageTagsBySource(imageId, tags, 'user', now);
 
       this.db.run(
         `UPDATE images
@@ -743,10 +1088,123 @@ export class InspiraDBApp {
       );
     });
 
+    const embeddingResult = await this.refreshEmbeddingWithFallback(imageId);
+    let xmpSidecarPath = '';
+    try {
+      xmpSidecarPath = this.syncImageMetadataToXmp(imageId).sidecarPath;
+    } catch (error) {
+      this.logger.error('xmp-write-library-failed', {
+        imageId,
+        error: String(error?.message || error),
+      });
+    }
+
     return {
       imageId,
       activeTagSource: 'user',
       tags: this.getEffectiveTags(imageId),
+      ...embeddingResult,
+      xmpSidecarPath,
+    };
+  }
+
+  exportImage(imageId, destinationPath) {
+    const image = this.db.get(
+      `SELECT id, original_file_name, library_path
+       FROM images
+       WHERE id = :imageId`,
+      { imageId },
+    );
+
+    if (!image) {
+      throw new Error('IMAGE_NOT_FOUND');
+    }
+
+    if (!destinationPath) {
+      throw new Error('EXPORT_PATH_REQUIRED');
+    }
+
+    const outputPath = appendOriginalExtensionIfMissing(path.resolve(destinationPath), image.original_file_name);
+    copyFile(image.library_path, outputPath);
+    const xmpSync = this.syncImageMetadataToXmp(imageId, outputPath);
+
+    return {
+      imageId,
+      filePath: outputPath,
+      sidecarPath: xmpSync.sidecarPath,
+      embedded: xmpSync.embedded,
+      writeMode: xmpSync.writeMode,
+    };
+  }
+
+  exportImages(imageIds, destinationDir) {
+    const resolvedDir = resolveExistingFolderPath(destinationDir);
+    const normalizedImageIds = normalizeImageIds(imageIds);
+    if (!normalizedImageIds.length) {
+      throw new Error('EMPTY_EXPORT_SELECTION');
+    }
+
+    const usedPaths = new Set();
+    const exported = [];
+    const failed = [];
+
+    for (const imageId of normalizedImageIds) {
+      const image = this.db.get(
+        `SELECT id, original_file_name, library_path
+         FROM images
+         WHERE id = :imageId`,
+        { imageId },
+      );
+
+      if (!image) {
+        failed.push({
+          imageId,
+          reason: 'IMAGE_NOT_FOUND',
+        });
+        continue;
+      }
+
+      const baseName = sanitizeExportFileName(image.original_file_name, `image-${image.id}.jpg`);
+      const parsed = path.parse(baseName);
+      const ext = parsed.ext || path.extname(image.original_file_name) || '.jpg';
+      const stem = parsed.name || `image-${image.id}`;
+
+      let index = 0;
+      let outputPath = '';
+      do {
+        const suffix = index === 0 ? '' : `-${index + 1}`;
+        outputPath = path.join(resolvedDir, `${stem}${suffix}${ext}`);
+        index += 1;
+      } while (usedPaths.has(outputPath.toLowerCase()) || fs.existsSync(outputPath));
+
+      usedPaths.add(outputPath.toLowerCase());
+
+      try {
+        copyFile(image.library_path, outputPath);
+        const xmpSync = this.syncImageMetadataToXmp(image.id, outputPath);
+        exported.push({
+          imageId: image.id,
+          filePath: outputPath,
+          sidecarPath: xmpSync.sidecarPath,
+          embedded: xmpSync.embedded,
+          writeMode: xmpSync.writeMode,
+        });
+      } catch (error) {
+        failed.push({
+          imageId: image.id,
+          reason: error?.code || 'EXPORT_FAILED',
+          message: String(error?.message || error),
+        });
+      }
+    }
+
+    return {
+      destinationDir: resolvedDir,
+      requestedCount: normalizedImageIds.length,
+      exportedCount: exported.length,
+      failedCount: failed.length,
+      exported,
+      failed,
     };
   }
 
@@ -762,6 +1220,7 @@ export class InspiraDBApp {
 
     removeFileIfExists(image.library_path);
     removeFileIfExists(image.thumbnail_path);
+    removeFileIfExists(buildXmpSidecarPathForImage(image.library_path));
 
     return {
       imageId,

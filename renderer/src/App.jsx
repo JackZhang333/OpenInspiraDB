@@ -30,6 +30,8 @@ export default function App() {
     importFile,
     selectImage,
     saveMetadata,
+    exportImage,
+    exportCurrentResultBatch,
     rebuildAnalysis,
     deleteSelected,
     saveSettings,
@@ -74,6 +76,7 @@ export default function App() {
             importProgress={importProgress}
             onImportFolder={importFolder}
             onImportFile={importFile}
+            onExportBatch={exportCurrentResultBatch}
             availableTags={availableTags}
             selectedTag={selectedTag}
             onSelectTag={(tagName) => {
@@ -146,6 +149,7 @@ export default function App() {
                   loading={detailLoading}
                   saving={saving || importing}
                   onSaveMetadata={saveMetadata}
+                  onExport={exportImage}
                   onReanalyze={rebuildAnalysis}
                   onDelete={deleteSelected}
                 />

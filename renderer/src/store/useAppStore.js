@@ -3,6 +3,9 @@ import { create } from 'zustand';
 const ERROR_MESSAGES = {
   EMPTY_CAPTION: '描述不能为空',
   IMAGE_NOT_FOUND: '图片不存在，可能已被删除',
+  EMPTY_EXPORT_SELECTION: '当前列表没有可导出的图片',
+  EXPORT_PATH_REQUIRED: '导出路径不能为空',
+  DESKTOP_BRIDGE_OUTDATED: '客户端桥接未更新，请重启应用后再试',
   DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
   ZHIPU_API_KEY_MISSING: '请先在设置中填写智谱 API Key，或配置 ZHIPU_API_KEY 环境变量',
   ZHIPU_API_REQUEST_FAILED: '智谱接口请求失败，请检查 API Key、网络或模型权限',
@@ -17,6 +20,21 @@ function getBridge() {
     throw error;
   }
   return bridge;
+}
+
+function getInspiraMethod(methodName, channelName = '', mapArgsToPayload = (...args) => args[0]) {
+  const bridge = window?.inspira;
+  if (bridge && typeof bridge[methodName] === 'function') {
+    return (...args) => bridge[methodName](...args);
+  }
+
+  if (bridge && typeof bridge.invoke === 'function' && channelName) {
+    return (...args) => bridge.invoke(channelName, mapArgsToPayload(...args));
+  }
+
+  const error = new Error('DESKTOP_BRIDGE_OUTDATED');
+  error.code = 'DESKTOP_BRIDGE_OUTDATED';
+  throw error;
 }
 
 function getErrorKey(error) {
@@ -61,6 +79,7 @@ function getErrorMessage(error) {
 }
 
 let importProgressUnsubscribe = null;
+let importAutoRefreshInFlight = false;
 
 function normalizeImportProgress(payload = {}) {
   const total = Number(payload.total);
@@ -76,6 +95,7 @@ function normalizeImportProgress(payload = {}) {
     skippedCount: Number(payload.skippedCount || 0),
     readyCount: Number(payload.readyCount || 0),
     failedCount: Number(payload.failedCount || 0),
+    queuedCount: Number(payload.queuedCount || 0),
     analyzingCount: Number(payload.analyzingCount || 0),
     message: String(payload.message || ''),
   };
@@ -110,15 +130,20 @@ export const useAppStore = create((set, get) => ({
 
     importProgressUnsubscribe = bridge.onImportProgress((payload = {}) => {
       const progress = normalizeImportProgress(payload);
-      const isActive = ['started', 'processing'].includes(progress.phase);
+      const isActive = progress.phase === 'started'
+        || progress.phase === 'processing'
+        || progress.phase === 'importing'
+        || progress.phase === 'analyzing';
 
       set({
         importProgress: progress,
         importing: isActive,
       });
 
-      if (progress.phase === 'completed') {
+      if (progress.phase === 'completed' && !importAutoRefreshInFlight) {
+        importAutoRefreshInFlight = true;
         get().refreshSearch().finally(() => {
+          importAutoRefreshInFlight = false;
           set({ importing: false, importProgress: null });
         });
       }
@@ -214,12 +239,13 @@ export const useAppStore = create((set, get) => ({
 
     try {
       const bridge = getBridge();
+      const hasProgressBridge = typeof bridge.onImportProgress === 'function';
       const result = await bridge.importFolder();
-      if (result?.canceled) {
+      if (result?.canceled || !hasProgressBridge) {
         set({ importing: false, importProgress: null });
-      } else if (typeof bridge.onImportProgress !== 'function') {
+      }
+      if (!result?.canceled && !hasProgressBridge) {
         await get().refreshSearch();
-        set({ importing: false, importProgress: null });
       }
       return result;
     } catch (error) {
@@ -234,12 +260,13 @@ export const useAppStore = create((set, get) => ({
 
     try {
       const bridge = getBridge();
+      const hasProgressBridge = typeof bridge.onImportProgress === 'function';
       const result = await bridge.importFile();
-      if (result?.canceled) {
+      if (result?.canceled || !hasProgressBridge) {
         set({ importing: false, importProgress: null });
-      } else if (typeof bridge.onImportProgress !== 'function') {
+      }
+      if (!result?.canceled && !hasProgressBridge) {
         await get().refreshSearch();
-        set({ importing: false, importProgress: null });
       }
       return result;
     } catch (error) {
@@ -282,6 +309,46 @@ export const useAppStore = create((set, get) => ({
       await get().refreshSearch();
       await get().reloadSelectedDetail();
       set({ saving: false });
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async exportImage(imageId) {
+    if (!imageId) {
+      return { canceled: true };
+    }
+
+    set({ saving: true, error: null });
+    try {
+      const callExportImage = getInspiraMethod('exportImage', 'inspiradb:export-image');
+      const result = await callExportImage(imageId);
+      set({ saving: false });
+      return result;
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async exportCurrentResultBatch() {
+    const imageIds = (get().result?.items || []).map((item) => item.id).filter(Boolean);
+    if (!imageIds.length) {
+      set({ error: ERROR_MESSAGES.EMPTY_EXPORT_SELECTION });
+      return { canceled: true, reason: 'EMPTY_EXPORT_SELECTION' };
+    }
+
+    set({ saving: true, error: null });
+    try {
+      const callExportImages = getInspiraMethod(
+        'exportImages',
+        'inspiradb:export-images',
+        (ids) => ({ imageIds: ids }),
+      );
+      const result = await callExportImages(imageIds);
+      set({ saving: false });
+      return result;
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
       throw error;
