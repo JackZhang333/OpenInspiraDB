@@ -4,12 +4,13 @@ This project includes a basic `electron-builder` setup for Mac App Store packagi
 
 ## What is configured
 
-- `npm run dist:mas-dev`: build a local development-signed `mas-dev` package
+- `npm run dist:mas-dev`: build a local development-signed Mac App Store package using `electron-builder.mas-dev.cjs`
 - `npm run dist:mas`: build a distribution-signed `mas` package for upload
 - `npm run dist:dmg`: build a DMG package for direct distribution
 - `npm run icon:mac`: generate `build/icon.icns` from `build/icon-1024.png`
 - `build/entitlements.mas.plist`: main app entitlements
 - `build/entitlements.mas.inherit.plist`: child process entitlements
+- `build/profiles/mas-dev.provisionprofile`: local Mac App Store development provisioning profile used by `dist:mas-dev`
 
 ## Before you build
 
@@ -34,6 +35,8 @@ npm install
 npm run icon:mac
 npm run dist:mas-dev
 ```
+
+Before running `npm run dist:mas-dev`, copy your installed Mac App Store development provisioning profile to `build/profiles/mas-dev.provisionprofile`. This path is local-only because the whole `build/` directory is ignored by git.
 
 Then open the generated app from the `release/` directory and verify:
 
