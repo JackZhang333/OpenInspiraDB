@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, Download, Pencil, Plus, RotateCcw, Save, Sparkles, Trash2, X, Check } from 'lucide-react';
+import { AlertCircle, Check, Copy, Download, Pencil, Plus, RotateCcw, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 import { Badge } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
@@ -43,7 +43,9 @@ export function DetailPanel({
   detail,
   loading,
   saving,
+  copiedImageId,
   onSaveMetadata,
+  onCopy,
   onExport,
   onReanalyze,
   onDelete,
@@ -85,6 +87,7 @@ export function DetailPanel({
 
   const { image, activeCaption, effectiveTags, aiSuggestedTags, latestJob } = detail;
   const isFailed = image.analysis_status === 'failed';
+  const isCopied = copiedImageId === image.id;
   const statusLabelMap = {
     ready: '已就绪',
     queued: '排队中',
@@ -429,6 +432,20 @@ export function DetailPanel({
               编辑信息
             </Button>
             <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className={cn('flex-1', isCopied && 'bg-moss text-white hover:bg-moss/90')}
+                onClick={() => onCopy?.(detail.image.id)}
+                disabled={saving}
+              >
+                {isCopied ? (
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {isCopied ? '已复制' : '复制'}
+              </Button>
               <Button
                 type="button"
                 variant="secondary"

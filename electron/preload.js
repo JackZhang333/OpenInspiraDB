@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('inspira', {
   exportImages(imageIds) {
     return ipcRenderer.invoke('inspiradb:export-images', { imageIds });
   },
+  copyImage(imageId) {
+    return ipcRenderer.invoke('inspiradb:copy-image', imageId);
+  },
   search(payload) {
     return ipcRenderer.invoke('inspiradb:search', payload);
   },

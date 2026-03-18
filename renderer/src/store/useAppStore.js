@@ -5,6 +5,8 @@ const ERROR_MESSAGES = {
   IMAGE_NOT_FOUND: '图片不存在，可能已被删除',
   EMPTY_EXPORT_SELECTION: '当前列表没有可导出的图片',
   EXPORT_PATH_REQUIRED: '导出路径不能为空',
+  COPY_IMAGE_FAILED: '当前图片暂时无法复制，请改用导出后再粘贴',
+  IMAGE_FILE_MISSING: '图片原文件不存在，可能已被移动或删除',
   DESKTOP_BRIDGE_OUTDATED: '客户端桥接未更新，请重启应用后再试',
   DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
   ZHIPU_API_KEY_MISSING: '请先在设置中填写智谱 API Key，或配置 ZHIPU_API_KEY 环境变量',
@@ -80,6 +82,7 @@ function getErrorMessage(error) {
 
 let importProgressUnsubscribe = null;
 let importAutoRefreshInFlight = false;
+let copyFeedbackTimeout = null;
 
 function normalizeImportProgress(payload = {}) {
   const total = Number(payload.total);
@@ -117,6 +120,7 @@ export const useAppStore = create((set, get) => ({
   detailLoading: false,
   saving: false,
   error: null,
+  copiedImageId: null,
 
   setQuery(query) {
     set({ query });
@@ -362,6 +366,34 @@ export const useAppStore = create((set, get) => ({
       return result;
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async copyImage(imageId) {
+    if (!imageId) {
+      return { copied: false };
+    }
+
+    if (copyFeedbackTimeout) {
+      clearTimeout(copyFeedbackTimeout);
+      copyFeedbackTimeout = null;
+    }
+
+    set({ saving: true, error: null });
+    try {
+      const callCopyImage = getInspiraMethod('copyImage', 'inspiradb:copy-image');
+      const result = await callCopyImage(imageId);
+      set({ saving: false, copiedImageId: imageId });
+      copyFeedbackTimeout = setTimeout(() => {
+        copyFeedbackTimeout = null;
+        if (get().copiedImageId === imageId) {
+          set({ copiedImageId: null });
+        }
+      }, 1800);
+      return result;
+    } catch (error) {
+      set({ saving: false, copiedImageId: null, error: getErrorMessage(error) });
       throw error;
     }
   },

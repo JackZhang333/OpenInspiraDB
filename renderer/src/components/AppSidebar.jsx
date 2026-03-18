@@ -12,21 +12,18 @@ import {
   Clock,
   Copy,
   SkipForward,
+  Lightbulb,
 } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
 function LogoIcon({ size = 24 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M12 2L12.5 4C13.5 3.8 15 4 16 5.5C17 7 16.5 8.5 16 9.5L18 10C18.5 10.2 19.5 10.8 19 12C18.5 13.2 17 14 15.5 14.5L14 19C13.8 19.6 13.2 20 12.5 20H11.5C10.8 20 10.2 19.6 10 19L8.5 14.5C7 14 5.5 13.2 5 12C4.5 10.8 5.5 10.2 6 10L8 9.5C7.5 8.5 7 7 8 5.5C9 4 10.5 3.8 11.5 4L12 2Z"
-        fill="#4e6958"
-        stroke="#4e6958"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="7" r="1.5" fill="white" />
-    </svg>
+    <div
+      className="flex items-center justify-center rounded-xl bg-gradient-to-br from-moss to-moss/80 text-white shadow-sm"
+      style={{ width: size, height: size }}
+    >
+      <Lightbulb className="h-[60%] w-[60%]" strokeWidth={2.5} />
+    </div>
   );
 }
 
@@ -190,7 +187,7 @@ export function AppSidebar({
         {!collapsed ? (
           <div className="flex items-center gap-2">
             <LogoIcon size={28} />
-            <span className="text-[15px] font-semibold tracking-tight text-ink">小图钉</span>
+            <span className="text-[17px] font-bold tracking-tight text-ink bg-gradient-to-r from-moss to-moss/70 bg-clip-text text-transparent">意图集</span>
           </div>
         ) : (
           <LogoIcon size={24} />

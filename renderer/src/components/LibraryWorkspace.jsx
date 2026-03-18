@@ -21,48 +21,8 @@ export function LibraryWorkspace({
   const [columnCount, setColumnCount] = useState(5);
   const [hoveredCardId, setHoveredCardId] = useState(null);
   const [dismissedCardId, setDismissedCardId] = useState(null);
-  const [visibleItemIds, setVisibleItemIds] = useState(new Set());
-  const observerRef = useRef(null);
   const loadMoreRef = useRef(null);
   const scrollContainerRef = useRef(null);
-
-  // Intersection Observer for lazy loading card images
-  const observeItem = useCallback((element, itemId) => {
-    if (!observerRef.current) {
-      observerRef.current = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              const id = entry.target.dataset.itemId;
-              if (id) {
-                setVisibleItemIds((prev) => new Set(prev).add(id));
-              }
-            }
-          });
-        },
-        { root: scrollContainerRef.current, rootMargin: '100px' }
-      );
-    }
-    if (element) {
-      element.dataset.itemId = itemId;
-      observerRef.current.observe(element);
-    }
-  }, []);
-
-  const unobserveItem = useCallback((element) => {
-    if (observerRef.current && element) {
-      observerRef.current.unobserve(element);
-    }
-  }, []);
-
-  // Cleanup observer on unmount
-  useEffect(() => {
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, []);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -74,7 +34,7 @@ export function LibraryWorkspace({
           onLoadMore();
         }
       },
-      { root: scrollContainerRef.current, threshold: 0.1 }
+      { root: scrollContainerRef.current, threshold: 0.01, rootMargin: '100px' }
     );
 
     observer.observe(loadMoreRef.current);
@@ -123,11 +83,6 @@ export function LibraryWorkspace({
       setDismissedCardId(null);
     }
   }, [dismissedCardId, hoveredCardId, result.items]);
-
-  // Reset visible items when result changes significantly
-  useEffect(() => {
-    setVisibleItemIds(new Set());
-  }, [result.items.length === 0]);
 
   const handlePointerEnterCard = useCallback((cardId) => {
     setHoveredCardId(cardId);
@@ -265,7 +220,11 @@ export function LibraryWorkspace({
 
         {/* Gallery Grid */}
         {result.items.length > 0 && (
-          <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
+          <div
+            ref={scrollContainerRef}
+            className="min-h-0 flex-1 overflow-auto overscroll-contain"
+            style={{ contain: 'strict' }} // CSS containment for better performance
+          >
             <div className="flex items-start gap-3">
               {columns.map((columnItems, colIndex) => (
                 <div key={colIndex} className="flex flex-1 flex-col gap-3">
@@ -274,9 +233,6 @@ export function LibraryWorkspace({
                       key={item.id}
                       item={item}
                       active={item.id === selectedImageId}
-                      visible={visibleItemIds.has(String(item.id))}
-                      onObserve={observeItem}
-                      onUnobserve={unobserveItem}
                       onClick={() => onSelectImage(item.id)}
                       onPointerEnterCard={handlePointerEnterCard}
                       onPointerLeaveCard={handlePointerLeaveCard}

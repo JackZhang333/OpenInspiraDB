@@ -21,6 +21,7 @@ export default function App() {
     detailLoading,
     saving,
     error,
+    copiedImageId,
     loading,
     page,
     pageSize,
@@ -36,6 +37,7 @@ export default function App() {
     saveMetadata,
     exportImage,
     exportCurrentResultBatch,
+    copyImage,
     rebuildAnalysis,
     deleteSelected,
     saveSettings,
@@ -163,7 +165,9 @@ export default function App() {
                   detail={detail}
                   loading={detailLoading}
                   saving={saving || importing}
+                  copiedImageId={copiedImageId}
                   onSaveMetadata={saveMetadata}
+                  onCopy={copyImage}
                   onExport={exportImage}
                   onReanalyze={rebuildAnalysis}
                   onDelete={deleteSelected}

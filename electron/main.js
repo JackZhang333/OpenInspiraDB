@@ -5,7 +5,15 @@ import { fileURLToPath } from 'node:url';
 import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
 
-const { app, BrowserWindow, dialog, ipcMain, safeStorage } = electron;
+const {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  safeStorage,
+} = electron;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +21,12 @@ const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'bmp'];
 
 let mainWindow = null;
 let inspiraApp = null;
+
+function createAppError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
 
 function emitImportProgress(payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -41,6 +55,19 @@ function fileToDataUrl(filePath) {
   const mimeType = toMimeType(filePath);
   const base64 = fs.readFileSync(filePath).toString('base64');
   return `data:${mimeType};base64,${base64}`;
+}
+
+function readClipboardImage(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw createAppError('IMAGE_FILE_MISSING');
+  }
+
+  const image = nativeImage.createFromPath(filePath);
+  if (!image || image.isEmpty()) {
+    throw createAppError('COPY_IMAGE_FAILED');
+  }
+
+  return image;
 }
 
 function decorateSearchItems(result) {
@@ -208,6 +235,13 @@ function registerIpcHandlers() {
     }
 
     return inspiraApp.exportImages(imageIds, result.filePaths[0]);
+  });
+
+  ipcMain.handle('inspiradb:copy-image', (_, imageId) => {
+    const detail = inspiraApp.getImageDetail(imageId);
+    const image = readClipboardImage(detail?.image?.library_path);
+    clipboard.writeImage(image);
+    return { imageId, copied: true };
   });
 
   ipcMain.handle('inspiradb:search', async (_, payload = {}) => {
