@@ -1,7 +1,7 @@
 {
   "name": "inspiradb",
-  "version": "0.1.0",
-  "description": "InspiraDB - AI-powered design asset manager",
+  "version": "0.2.0",
+  "description": "InspiraDB desktop app (V1-A)",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,6 +9,12 @@
     "build": "vite build",
     "electron:dev": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
     "electron:build": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "dist:dmg:unsigned": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg",
+    "dist:mas": "npm run build && electron-builder --mac mas",
+    "dist:mas-dev": "npm run build && electron-builder --mac mas-dev",
+    "icon:mac": "node scripts/build-mac-icon.mjs",
     "start": "node src/cli/demo.js",
     "test": "node --test"
   },
@@ -34,5 +40,57 @@
   "engines": {
     "node": ">=24"
   },
-  "main": "electron/main.js"
+  "main": "electron/main.js",
+  "build": {
+    "appId": "com.inspiradb.desktop",
+    "productName": "InspiraDB",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.icns",
+      "minimumSystemVersion": "13.0",
+      "extendInfo": {
+        "CFBundleDisplayName": "InspiraDB",
+        "CFBundleName": "InspiraDB",
+        "NSHumanReadableCopyright": "Copyright © 2026 InspiraDB. All rights reserved.",
+        "NSSupportsAutomaticGraphicsSwitching": true
+      },
+      "target": [
+        "zip"
+      ]
+    },
+    "dmg": {
+      "sign": false
+    },
+    "mas": {
+      "category": "public.app-category.graphics-design",
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "icon": "build/icon.icns",
+      "type": "distribution"
+    },
+    "masDev": {
+      "category": "public.app-category.graphics-design",
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "icon": "build/icon.icns",
+      "type": "development"
+    }
+  }
 }

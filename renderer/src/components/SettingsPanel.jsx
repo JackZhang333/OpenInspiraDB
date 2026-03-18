@@ -10,7 +10,7 @@ const AI_PROVIDERS = [
 
 export function SettingsPanel({ open, settings, saving, onSave, onClose }) {
   const [formData, setFormData] = useState({
-    provider: 'zhipu',
+    provider: 'mock',
     apiKey: '',
     ...settings,
   });
@@ -19,7 +19,7 @@ export function SettingsPanel({ open, settings, saving, onSave, onClose }) {
   useEffect(() => {
     if (settings) {
       setFormData({
-        provider: settings.provider || 'zhipu',
+        provider: settings.provider || 'mock',
         apiKey: settings.apiKey || '',
       });
     }
@@ -89,7 +89,7 @@ export function SettingsPanel({ open, settings, saving, onSave, onClose }) {
                 {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <p className="text-[11px] text-ink/40">当前版本会把配置保存到本地应用数据目录。</p>
+            <p className="text-[11px] text-ink/40">当前版本会通过 Electron safeStorage 加密后保存 API Key。</p>
           </div>
         </div>
 

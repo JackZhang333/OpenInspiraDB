@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage } = electron;
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage } = electron;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,6 +112,19 @@ function createInspiraApp() {
     dbPath: path.join(userDataPath, 'inspiradb.sqlite'),
     libraryRootPath: path.join(userDataPath, 'library'),
     thumbnailRootPath: path.join(userDataPath, 'thumbnails'),
+    secureStorePath: path.join(userDataPath, 'secure-store.json'),
+    secretEncryption: {
+      isEncryptionAvailable() {
+        return safeStorage.isEncryptionAvailable();
+      },
+      encryptString(value) {
+        return safeStorage.encryptString(value);
+      },
+      decryptString(buffer) {
+        return safeStorage.decryptString(buffer);
+      },
+    },
+    requireSecretEncryption: true,
     autoStartQueue: true,
   });
 }

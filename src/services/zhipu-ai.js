@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { nowIso } from '../core/database.js';
+import { buildEmbeddingText, getEffectiveTagNames } from '../utils/embedding.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
 import { normalizeVector } from '../utils/vector.js';
 import { saveAiTags, upsertEmbedding } from './mock-ai.js';
+import { isManagedKeychainRef } from './keychain-store.js';
 
 const ZHIPU_API_BASE = 'https://open.bigmodel.cn/api/paas/v4';
 const DEFAULT_VISION_MODEL = 'glm-4v-plus';
@@ -92,14 +94,27 @@ function parseAnalysisPayload(rawText, image) {
 }
 
 export class ZhipuAiService {
-  constructor(db, logger) {
+  constructor(db, logger, options = {}) {
     this.db = db;
     this.logger = logger;
+    this.resolveApiKeyFromRef = options.resolveApiKeyFromRef;
   }
 
   getSettings() {
     const settings = this.db.get('SELECT * FROM app_settings LIMIT 1');
-    const apiKey = String(settings?.api_key_ref || process.env.ZHIPU_API_KEY || '').trim();
+    const apiKeyRef = String(settings?.api_key_ref || '').trim();
+    let apiKey = '';
+
+    if (apiKeyRef) {
+      apiKey = isManagedKeychainRef(apiKeyRef)
+        ? String(this.resolveApiKeyFromRef?.(apiKeyRef) || '').trim()
+        : apiKeyRef;
+    }
+
+    if (!apiKey) {
+      apiKey = String(process.env.ZHIPU_API_KEY || '').trim();
+    }
+
     return {
       apiBase: ZHIPU_API_BASE,
       apiKey,
@@ -283,7 +298,11 @@ export class ZhipuAiService {
       { imageId },
     );
 
-    const vector = await this.embedText(finalCaption?.content || aiCaption);
+    const embeddingText = buildEmbeddingText(
+      finalCaption?.content || aiCaption,
+      getEffectiveTagNames(this.db, imageId),
+    );
+    const vector = await this.embedText(embeddingText);
 
     this.db.transaction(() => {
       upsertEmbedding(this.db, imageId, vector, 'zhipu', settings.embeddingModel);
@@ -322,7 +341,8 @@ export class ZhipuAiService {
     }
 
     const settings = this.getSettings();
-    const vector = await this.embedText(activeCaption.content);
+    const embeddingText = buildEmbeddingText(activeCaption.content, getEffectiveTagNames(this.db, imageId));
+    const vector = await this.embedText(embeddingText);
 
     this.db.transaction(() => {
       upsertEmbedding(this.db, imageId, vector, 'zhipu', settings.embeddingModel);

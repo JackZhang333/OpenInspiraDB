@@ -20,7 +20,7 @@ import {
   removeFileIfExists,
 } from '../utils/files.js';
 import { md5File } from '../utils/hash.js';
-import { cosineSimilarity } from '../utils/vector.js';
+import { cosineDistance } from '../utils/vector.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
 import {
   buildXmpSidecarPathForImage,
@@ -30,6 +30,7 @@ import {
 import { createLogger } from '../utils/logger.js';
 import { RoutedAiService } from '../services/ai-factory.js';
 import { AnalysisQueue } from '../services/analysis-queue.js';
+import { KeychainStore, isManagedKeychainRef } from '../services/keychain-store.js';
 
 function resolveExistingFilePath(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -89,6 +90,233 @@ function buildInClauseParams(prefix, values) {
   };
 }
 
+function normalizeSearchText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const SEARCH_INTENT_RULES = [
+  {
+    name: 'cute',
+    match: /可爱|萌|萌系|治愈|童趣|软萌|可爱的样子/u,
+    semanticExpansions: ['可爱', '萌', '童趣', '温柔', '婴儿', '新生儿', '宝宝'],
+    lexicalExpansions: ['婴儿', '新生儿', '宝宝', '儿童'],
+    positiveSignals: [
+      { terms: ['婴儿', '新生儿', '宝宝', '婴童'], score: 18 },
+      { terms: ['儿童', '小孩', '男孩', '女孩', '亲子'], score: 12 },
+      { terms: ['猫', '狗', '兔', '熊猫', '宠物', '小鸟', '鸟儿', '猫头鹰'], score: 5 },
+    ],
+    negativeSignals: [
+      { terms: ['自然风光', '风景', '海滩', '水面', '涟漪', '建筑', '教堂', '几何', '科技感', '园艺'], score: -4 },
+    ],
+  },
+  {
+    name: 'infant',
+    match: /婴儿|新生儿|宝宝|婴童/u,
+    semanticExpansions: ['婴儿', '新生儿', '宝宝', '婴童'],
+    lexicalExpansions: ['婴儿', '新生儿', '宝宝'],
+    positiveSignals: [
+      { terms: ['婴儿', '新生儿', '宝宝', '婴童'], score: 20 },
+      { terms: ['儿童', '小孩', '男孩', '女孩'], score: 10 },
+    ],
+    negativeSignals: [
+      { terms: ['自然风光', '风景', '海滩', '建筑', '几何', '科技感'], score: -4 },
+    ],
+  },
+  {
+    name: 'landscape',
+    match: /自然风景|自然风光|风景|海景|山景|日落/u,
+    semanticExpansions: ['自然风景', '自然风光', '风景', '海滩', '山景', '日落'],
+    lexicalExpansions: ['自然风景', '自然风光', '风景', '海滩'],
+    positiveSignals: [
+      { terms: ['自然风光', '风景', '海滩', '水面', '涟漪', '绿树', '樱花', '山景', '日落'], score: 12 },
+    ],
+  },
+];
+
+function mergeWeightedTerm(termMap, term, weight) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized) {
+    return;
+  }
+
+  const existing = termMap.get(normalized);
+  if (!existing || existing.weight < weight) {
+    termMap.set(normalized, { term: normalized, weight });
+  }
+}
+
+function collectWeightedSearchTerms(query, baseWeight = 1) {
+  const normalized = normalizeSearchText(query);
+  const terms = new Map();
+
+  if (!normalized) {
+    return [];
+  }
+
+  mergeWeightedTerm(terms, normalized, 1 * baseWeight);
+
+  const words = normalized
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  for (const word of words) {
+    mergeWeightedTerm(terms, word, 0.94 * baseWeight);
+    if (/[儿兒]$/u.test(word) && word.length > 1) {
+      mergeWeightedTerm(terms, word.replace(/[儿兒]$/u, ''), 0.82 * baseWeight);
+    }
+  }
+
+  const hanText = normalized.replace(/[^\p{Script=Han}]+/gu, '');
+  if (hanText) {
+    mergeWeightedTerm(terms, hanText, 0.96 * baseWeight);
+
+    if (/[儿兒]$/u.test(hanText) && hanText.length > 1) {
+      mergeWeightedTerm(terms, hanText.replace(/[儿兒]$/u, ''), 0.82 * baseWeight);
+    }
+
+    for (let index = 0; index < hanText.length - 1; index += 1) {
+      mergeWeightedTerm(terms, hanText.slice(index, index + 2), 0.72 * baseWeight);
+    }
+
+    if (hanText.length <= 6) {
+      for (let index = 0; index < hanText.length - 2; index += 1) {
+        mergeWeightedTerm(terms, hanText.slice(index, index + 3), 0.62 * baseWeight);
+      }
+    }
+  }
+
+  return Array.from(terms.values());
+}
+
+function buildSearchProfile(query) {
+  const normalized = normalizeSearchText(query);
+  const lexicalTerms = new Map();
+  const semanticTerms = new Set();
+  const intents = [];
+
+  for (const entry of collectWeightedSearchTerms(normalized, 1)) {
+    mergeWeightedTerm(lexicalTerms, entry.term, entry.weight);
+    semanticTerms.add(entry.term);
+  }
+
+  for (const rule of SEARCH_INTENT_RULES) {
+    if (!rule.match.test(normalized)) {
+      continue;
+    }
+
+    intents.push(rule);
+
+    for (const term of rule.semanticExpansions || []) {
+      semanticTerms.add(normalizeSearchText(term));
+    }
+
+    for (const term of rule.lexicalExpansions || []) {
+      for (const entry of collectWeightedSearchTerms(term, 0.88)) {
+        mergeWeightedTerm(lexicalTerms, entry.term, entry.weight);
+      }
+    }
+  }
+
+  return {
+    normalized,
+    hanText: normalized.replace(/[^\p{Script=Han}]+/gu, ''),
+    semanticText: Array.from(semanticTerms).filter(Boolean).join(' '),
+    lexicalTerms: Array.from(lexicalTerms.values()),
+    intents,
+  };
+}
+
+function matchesSignalTerm(text, term) {
+  const normalizedText = normalizeSearchText(text);
+  const normalizedTerm = normalizeSearchText(term);
+
+  if (!normalizedText || !normalizedTerm) {
+    return false;
+  }
+
+  return normalizedText.includes(normalizedTerm);
+}
+
+function scoreSearchIntent(profile, activeCaption, tags) {
+  if (!profile?.intents?.length) {
+    return 0;
+  }
+
+  const haystacks = [activeCaption?.content || '', ...(tags || [])].map((value) => normalizeSearchText(value));
+  let total = 0;
+
+  for (const rule of profile.intents) {
+    for (const signal of rule.positiveSignals || []) {
+      if (signal.terms.some((term) => haystacks.some((text) => matchesSignalTerm(text, term)))) {
+        total += signal.score;
+      }
+    }
+
+    for (const signal of rule.negativeSignals || []) {
+      if (signal.terms.some((term) => haystacks.some((text) => matchesSignalTerm(text, term)))) {
+        total += signal.score;
+      }
+    }
+  }
+
+  return total;
+}
+
+function scoreSearchTextMatch(profile, image, activeCaption, tags) {
+  const queryTerms = profile?.lexicalTerms || [];
+  if (!queryTerms.length) {
+    return 0;
+  }
+
+  const fileName = normalizeSearchText(String(image?.original_file_name || '').replace(/\.[^.]+$/, ''));
+  const caption = normalizeSearchText(activeCaption?.content || '');
+  const normalizedTags = (tags || []).map((tag) => normalizeSearchText(tag));
+  const haystacks = [fileName, caption, ...normalizedTags].filter(Boolean);
+
+  let bestScore = 0;
+
+  for (const { term, weight } of queryTerms) {
+    const isSingleHan = /^\p{Script=Han}$/u.test(term);
+    const childSuffixBase = profile.hanText?.replace(/[儿兒]$/u, '');
+    const allowSingleHanPartial = isSingleHan && childSuffixBase === term && term.length === 1;
+
+    for (const tag of normalizedTags) {
+      if (tag === term) {
+        bestScore = Math.max(bestScore, 12 * weight);
+      } else if (((!isSingleHan && term.length >= 2) || allowSingleHanPartial) && (tag.includes(term) || term.includes(tag))) {
+        bestScore = Math.max(bestScore, 9 * weight);
+      }
+    }
+
+    for (const text of [caption, fileName]) {
+      if (text === term) {
+        bestScore = Math.max(bestScore, 8 * weight);
+      } else if (((!isSingleHan && term.length >= 2) || allowSingleHanPartial) && text.includes(term)) {
+        bestScore = Math.max(bestScore, 6 * weight);
+      }
+    }
+  }
+
+  const chars = Array.from(new Set(profile.hanText?.match(/\p{Script=Han}/gu) || []));
+  if (chars.length >= 2) {
+    for (const text of haystacks) {
+      const covered = chars.filter((char) => text.includes(char)).length / chars.length;
+      if (covered >= 1) {
+        bestScore = Math.max(bestScore, 3);
+      } else if (covered >= 0.6) {
+        bestScore = Math.max(bestScore, 1 + covered);
+      }
+    }
+  }
+
+  return bestScore;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -124,13 +352,23 @@ function appendOriginalExtensionIfMissing(filePath, originalFileName) {
 }
 
 export class InspiraDBApp {
-  constructor({ rootDir = process.cwd(), dbPath, libraryRootPath, thumbnailRootPath, autoStartQueue = true } = {}) {
+  constructor({
+    rootDir = process.cwd(),
+    dbPath,
+    libraryRootPath,
+    thumbnailRootPath,
+    secureStorePath,
+    secretEncryption,
+    requireSecretEncryption = false,
+    autoStartQueue = true,
+  } = {}) {
     const defaults = defaultPaths(rootDir);
 
     this.paths = {
       dbPath: dbPath || defaults.dbPath,
       libraryRootPath: libraryRootPath || defaults.libraryRootPath,
       thumbnailRootPath: thumbnailRootPath || defaults.thumbnailRootPath,
+      secureStorePath: secureStorePath || path.join(path.dirname(dbPath || defaults.dbPath), 'secure-store.json'),
     };
 
     ensureDirectories([path.dirname(this.paths.dbPath), this.paths.libraryRootPath, this.paths.thumbnailRootPath]);
@@ -138,8 +376,15 @@ export class InspiraDBApp {
     this.logger = createLogger('inspiradb');
     this.db = new InspiraDatabase(this.paths.dbPath);
     this.db.ensureSettings(this.paths.libraryRootPath);
+    this.keychainStore = new KeychainStore({
+      storePath: this.paths.secureStorePath,
+      encryption: secretEncryption,
+      requireEncryption: requireSecretEncryption,
+    });
 
-    this.aiService = new RoutedAiService(this.db, this.logger);
+    this.aiService = new RoutedAiService(this.db, this.logger, {
+      resolveApiKeyFromRef: (ref) => this.resolveApiKeyFromRef(ref),
+    });
     this.queue = new AnalysisQueue({
       db: this.db,
       aiService: this.aiService,
@@ -154,6 +399,14 @@ export class InspiraDBApp {
   close() {
     this.queue.stop();
     this.db.close();
+  }
+
+  resolveApiKeyFromRef(ref) {
+    if (!ref) {
+      return '';
+    }
+
+    return this.keychainStore.getSecret(ref);
   }
 
   async importFolder(folderPath, options = {}) {
@@ -713,7 +966,8 @@ export class InspiraDBApp {
       };
     }
 
-    const queryVector = await this.aiService.embedText(cleanQuery);
+    const searchProfile = buildSearchProfile(cleanQuery);
+    const queryVector = await this.aiService.embedText(searchProfile.semanticText || cleanQuery);
     const scored = [];
 
     for (const image of candidates) {
@@ -722,21 +976,45 @@ export class InspiraDBApp {
         continue;
       }
 
+      const activeCaption = this.db.get(
+        `SELECT id, content
+         FROM captions
+         WHERE id = :captionId`,
+        { captionId: image.active_caption_id },
+      );
+      const effectiveTags = this.getEffectiveTags(image.id);
       const vector = toJsonVector(embedding.vector);
-      const score = cosineSimilarity(queryVector, vector);
-      scored.push({ image, score });
+      const distance = cosineDistance(queryVector, vector);
+      const semanticScore = Math.max(0, 1 - distance);
+      const lexicalScore = scoreSearchTextMatch(searchProfile, image, activeCaption, effectiveTags);
+      const intentScore = scoreSearchIntent(searchProfile, activeCaption, effectiveTags);
+      const rankScore = semanticScore * 70 + lexicalScore * 4 + intentScore;
+      scored.push({
+        image,
+        distance,
+        score: semanticScore,
+        lexicalScore,
+        intentScore,
+        rankScore,
+      });
     }
 
     scored.sort((a, b) => {
-      if (Math.abs(b.score - a.score) < 1e-9) {
+      if (Math.abs(b.rankScore - a.rankScore) >= 1e-9) {
+        return b.rankScore - a.rankScore;
+      }
+
+      if (Math.abs(a.distance - b.distance) < 1e-9) {
         return b.image.updated_at.localeCompare(a.image.updated_at);
       }
-      return b.score - a.score;
+      return a.distance - b.distance;
     });
 
     const paged = scored.slice(offset, offset + pageSize).map((item) => ({
       ...item.image,
+      distance: Number(item.distance.toFixed(6)),
       score: Number(item.score.toFixed(6)),
+      lexicalScore: Number(item.lexicalScore.toFixed(6)),
     }));
 
     return {
@@ -1284,33 +1562,34 @@ export class InspiraDBApp {
     };
   }
 
-  getFilterTags(query = '') {
+  async getFilterTags(query = '') {
     const cleanQuery = String(query || '').trim();
-    const params = {};
-    let whereClause = '';
+    const sourceItems = cleanQuery
+      ? (await this.searchImages(cleanQuery, [], { page: 1, pageSize: SEARCH_PAGE_SIZE })).items
+      : this.attachActiveDataForImages(this.getReadyImagesByTags([]));
 
-    if (cleanQuery) {
-      whereClause = 'WHERE t.name LIKE :query';
-      params.query = `%${cleanQuery}%`;
+    const counter = new Map();
+    for (const item of sourceItems) {
+      for (const tag of item.tags || []) {
+        counter.set(tag, (counter.get(tag) || 0) + 1);
+      }
     }
 
-    return this.db.all(
-      `SELECT t.name, COUNT(DISTINCT it.image_id) AS count
-       FROM tags t
-       LEFT JOIN image_tags it ON it.tag_id = t.id
-       ${whereClause}
-       GROUP BY t.id, t.name
-       ORDER BY count DESC, t.name ASC
-       LIMIT 50`,
-      params,
-    );
+    return Array.from(counter.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => {
+        if (b.count === a.count) {
+          return a.name.localeCompare(b.name);
+        }
+        return b.count - a.count;
+      });
   }
 
   getAppSettings() {
     const settings = this.db.ensureSettings(this.paths.libraryRootPath);
     return {
-      provider: settings.api_provider || 'zhipu',
-      apiKey: settings.api_key_ref || '',
+      provider: settings.api_provider || 'mock',
+      apiKey: this.resolveApiKeyFromRef(settings.api_key_ref || ''),
       cloudAnalysisEnabled: Boolean(settings.cloud_analysis_enabled),
       libraryRootPath: settings.library_root_path || this.paths.libraryRootPath,
     };
@@ -1319,8 +1598,26 @@ export class InspiraDBApp {
   async updateAppSettings(payload = {}) {
     const current = this.db.ensureSettings(this.paths.libraryRootPath);
     const now = nowIso();
-    const provider = String(payload.provider || current.api_provider || 'zhipu').trim() || 'zhipu';
-    const apiKey = String(payload.apiKey ?? current.api_key_ref ?? '').trim();
+    const provider = String(payload.provider || current.api_provider || 'mock').trim() || 'mock';
+    const hasApiKeyInput = Object.prototype.hasOwnProperty.call(payload, 'apiKey');
+    let apiKeyRef = String(current.api_key_ref || '').trim();
+
+    if (hasApiKeyInput) {
+      const plainApiKey = String(payload.apiKey || '').trim();
+      if (plainApiKey) {
+        const reusableRef = isManagedKeychainRef(apiKeyRef) ? apiKeyRef : '';
+        apiKeyRef = this.keychainStore.upsertSecret({
+          ref: reusableRef,
+          secret: plainApiKey,
+        });
+      } else {
+        if (apiKeyRef) {
+          this.keychainStore.deleteSecret(apiKeyRef);
+        }
+        apiKeyRef = '';
+      }
+    }
+
     const cloudAnalysisEnabled = payload.cloudAnalysisEnabled == null
       ? Number(current.cloud_analysis_enabled || 0)
       : payload.cloudAnalysisEnabled
@@ -1330,21 +1627,21 @@ export class InspiraDBApp {
     this.db.run(
       `UPDATE app_settings
        SET api_provider = :provider,
-           api_key_ref = :apiKey,
+           api_key_ref = :apiKeyRef,
            cloud_analysis_enabled = :cloudAnalysisEnabled,
            updated_at = :updatedAt
        WHERE id = :id`,
       {
         id: current.id,
         provider,
-        apiKey,
+        apiKeyRef: apiKeyRef || null,
         cloudAnalysisEnabled,
         updatedAt: now,
       },
     );
 
     const providerChanged = String(current.api_provider || '') !== provider;
-    const apiKeyChanged = String(current.api_key_ref || '') !== apiKey;
+    const apiKeyChanged = String(current.api_key_ref || '') !== apiKeyRef;
     if (providerChanged || apiKeyChanged) {
       await this.resyncAllImagesForProviderChange(provider);
     }

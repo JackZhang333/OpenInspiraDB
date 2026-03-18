@@ -1,4 +1,5 @@
 import { nowIso } from '../core/database.js';
+import { buildEmbeddingText, getEffectiveTagNames } from '../utils/embedding.js';
 import { embedTextMock } from '../utils/vector.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
 
@@ -192,7 +193,8 @@ export class MockAiService {
 
       saveAiTags(this.db, imageId, aiTags);
 
-      const vector = embedTextMock(activeCaptionContent);
+      const embeddingText = buildEmbeddingText(activeCaptionContent, getEffectiveTagNames(this.db, imageId));
+      const vector = embedTextMock(embeddingText);
       upsertEmbedding(this.db, imageId, vector, 'mock', 'mock-embed-v1');
 
       this.db.run(
@@ -239,7 +241,8 @@ export class MockAiService {
     await sleep(50 + Math.floor(Math.random() * 100));
 
     this.db.transaction(() => {
-      const vector = embedTextMock(activeCaption.content);
+      const embeddingText = buildEmbeddingText(activeCaption.content, getEffectiveTagNames(this.db, imageId));
+      const vector = embedTextMock(embeddingText);
       upsertEmbedding(this.db, imageId, vector, 'mock', 'mock-embed-v1');
       this.db.run(
         `UPDATE images

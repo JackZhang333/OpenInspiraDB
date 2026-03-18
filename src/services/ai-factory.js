@@ -2,11 +2,13 @@ import { MockAiService } from './mock-ai.js';
 import { ZhipuAiService } from './zhipu-ai.js';
 
 export class RoutedAiService {
-  constructor(db, logger) {
+  constructor(db, logger, options = {}) {
     this.db = db;
     this.logger = logger;
     this.mockService = new MockAiService(db, logger);
-    this.zhipuService = new ZhipuAiService(db, logger);
+    this.zhipuService = new ZhipuAiService(db, logger, {
+      resolveApiKeyFromRef: options.resolveApiKeyFromRef,
+    });
   }
 
   getProvider() {
