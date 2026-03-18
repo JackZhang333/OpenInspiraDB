@@ -6,6 +6,13 @@ import {
   Settings2,
   Tags,
   X,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Clock,
+  Ban,
+  Copy,
+  SkipForward,
 } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 

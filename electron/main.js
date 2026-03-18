@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage } = electron;
+const { app, BrowserWindow, dialog, ipcMain, safeStorage } = electron;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,24 +62,6 @@ function decorateImageDetail(detail) {
       thumbnail_data_url: fileToDataUrl(detail.image.thumbnail_path),
     },
   };
-}
-
-function resolveDragFilePath(filePath) {
-  if (!filePath) {
-    return '';
-  }
-
-  const resolvedPath = path.resolve(String(filePath));
-  if (!fs.existsSync(resolvedPath)) {
-    return '';
-  }
-
-  try {
-    const stat = fs.statSync(resolvedPath);
-    return stat.isFile() ? resolvedPath : '';
-  } catch {
-    return '';
-  }
 }
 
 function createMainWindow() {
@@ -267,24 +249,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('inspiradb:update-settings', (_, payload = {}) => {
     return inspiraApp.updateAppSettings(payload);
-  });
-
-  ipcMain.on('inspiradb:start-drag-image', (event, payload = {}) => {
-    const filePath = resolveDragFilePath(payload.filePath);
-    if (!filePath) {
-      return;
-    }
-
-    const iconPath = resolveDragFilePath(payload.iconPath) || filePath;
-    const icon = nativeImage.createFromPath(iconPath);
-    if (icon.isEmpty()) {
-      return;
-    }
-
-    event.sender.startDrag({
-      file: filePath,
-      icon,
-    });
   });
 }
 

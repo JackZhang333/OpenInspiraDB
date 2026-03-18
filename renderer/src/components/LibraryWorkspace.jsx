@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCcw, Search, Sparkles } from 'lucide-react';
+import { RefreshCcw, Search, Sparkles, X } from 'lucide-react';
 import { Badge } from './ui/badge.jsx';
 import { GalleryCard } from './GalleryCard.jsx';
 
@@ -17,7 +17,6 @@ export function LibraryWorkspace({
   const hasTagFilter = Boolean(selectedTag);
   const [columnCount, setColumnCount] = React.useState(5);
   const [hoveredCardId, setHoveredCardId] = React.useState(null);
-  const [draggingCardId, setDraggingCardId] = React.useState(null);
   const [dismissedCardId, setDismissedCardId] = React.useState(null);
 
   React.useEffect(() => {
@@ -38,22 +37,15 @@ export function LibraryWorkspace({
   }, []);
 
   React.useEffect(() => {
-    const clearDragAffordance = () => {
-      setHoveredCardId(null);
-      setDraggingCardId(null);
-    };
-
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        clearDragAffordance();
+        setHoveredCardId(null);
       }
     };
 
-    window.addEventListener('blur', clearDragAffordance);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      window.removeEventListener('blur', clearDragAffordance);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
@@ -65,14 +57,10 @@ export function LibraryWorkspace({
       setHoveredCardId(null);
     }
 
-    if (draggingCardId && !resultIds.has(draggingCardId)) {
-      setDraggingCardId(null);
-    }
-
     if (dismissedCardId && !resultIds.has(dismissedCardId)) {
       setDismissedCardId(null);
     }
-  }, [dismissedCardId, draggingCardId, hoveredCardId, result.items]);
+  }, [dismissedCardId, hoveredCardId, result.items]);
 
   const cols = Array.from({ length: columnCount }, () => []);
   (result.items || []).forEach((item, index) => {
@@ -86,18 +74,6 @@ export function LibraryWorkspace({
   const handlePointerLeaveCard = (cardId) => {
     setHoveredCardId((currentId) => (currentId === cardId ? null : currentId));
     setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
-  };
-
-  const handleDragHandleStart = (cardId) => {
-    setDraggingCardId(cardId);
-    setHoveredCardId(cardId);
-    setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
-  };
-
-  const handleDragHandleEnd = (cardId) => {
-    setDraggingCardId((currentId) => (currentId === cardId ? null : currentId));
-    setHoveredCardId((currentId) => (currentId === cardId ? null : currentId));
-    setDismissedCardId(cardId);
   };
 
   return (
@@ -125,7 +101,7 @@ export function LibraryWorkspace({
                 onClick={() => onQueryDraftChange('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-ink/30 transition hover:bg-clay/10 hover:text-ink/50"
               >
-                <RefreshCcw className="h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5" />
               </button>
             ) : null}
           </div>
@@ -199,14 +175,8 @@ export function LibraryWorkspace({
                       item={item}
                       active={item.id === selectedImageId}
                       onClick={() => onSelectImage(item.id)}
-                      dragAffordanceVisible={
-                        item.id === draggingCardId
-                        || (item.id === hoveredCardId && item.id !== dismissedCardId)
-                      }
                       onPointerEnterCard={handlePointerEnterCard}
                       onPointerLeaveCard={handlePointerLeaveCard}
-                      onDragHandleStart={handleDragHandleStart}
-                      onDragHandleEnd={handleDragHandleEnd}
                     />
                   ))}
                 </div>

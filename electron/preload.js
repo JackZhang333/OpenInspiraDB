@@ -57,11 +57,4 @@ contextBridge.exposeInMainWorld('inspira', {
   updateSettings(payload) {
     return ipcRenderer.invoke('inspiradb:update-settings', payload);
   },
-  startDragImage(filePath, iconPath) {
-    if (!filePath) {
-      return;
-    }
-
-    ipcRenderer.send('inspiradb:start-drag-image', { filePath, iconPath });
-  },
 });

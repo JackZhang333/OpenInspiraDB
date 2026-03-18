@@ -1,80 +1,14 @@
 import React from 'react';
-import { GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils.js';
-
-const DRAG_AFFORDANCE_HIDE_DELAY_MS = 100;
 
 export function GalleryCard({
   item,
   active,
   onClick,
-  dragAffordanceVisible,
   onPointerEnterCard,
   onPointerLeaveCard,
-  onDragHandleStart,
-  onDragHandleEnd,
 }) {
   const captionText = item.activeCaption?.content?.trim();
-  const filePath = String(item.library_path || '').trim();
-  const canDragToExternal = Boolean(filePath);
-  const [showDragAffordance, setShowDragAffordance] = React.useState(false);
-  const hideTimerRef = React.useRef(null);
-
-  React.useEffect(() => {
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-
-    if (!canDragToExternal) {
-      setShowDragAffordance(false);
-      return undefined;
-    }
-
-    if (dragAffordanceVisible) {
-      setShowDragAffordance(true);
-      return undefined;
-    }
-
-    hideTimerRef.current = setTimeout(() => {
-      setShowDragAffordance(false);
-      hideTimerRef.current = null;
-    }, DRAG_AFFORDANCE_HIDE_DELAY_MS);
-
-    return () => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-    };
-  }, [canDragToExternal, dragAffordanceVisible]);
-
-  const handleDragStart = (event) => {
-    if (!canDragToExternal) {
-      event.preventDefault();
-      return;
-    }
-
-    event.dataTransfer.effectAllowed = 'copy';
-    event.dataTransfer.setData('text/plain', item.original_file_name || 'image');
-
-    const startDragImage = window?.inspira?.startDragImage;
-    if (typeof startDragImage === 'function') {
-      startDragImage(filePath, item.thumbnail_path || filePath);
-    }
-  };
-
-  const handleHandleDragStart = (event) => {
-    onDragHandleStart?.(item.id);
-    handleDragStart(event);
-    if (event.defaultPrevented) {
-      onDragHandleEnd?.(item.id);
-    }
-  };
-
-  const handleHandleDragEnd = () => {
-    onDragHandleEnd?.(item.id);
-  };
 
   return (
     <div
@@ -111,41 +45,6 @@ export function GalleryCard({
         )}
 
         <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/5" />
-
-        {canDragToExternal ? (
-          <div className="pointer-events-none absolute right-2 top-2 z-10 flex items-center gap-1.5">
-            <span
-              className={cn(
-                'rounded-md bg-ink/75 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-white transition-all duration-200',
-                showDragAffordance ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0',
-              )}
-            >
-              拖拽
-            </span>
-            <div
-              draggable
-              onDragStart={handleHandleDragStart}
-              onDragEnd={handleHandleDragEnd}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              title="从这里拖到 Figma / Photoshop / Sketch"
-              aria-label="拖拽图片到外部设计工具"
-              className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-ink/60 shadow-md ring-1 ring-black/5',
-                'cursor-grab transition-all duration-200 active:cursor-grabbing',
-                showDragAffordance
-                  ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
-                  : 'pointer-events-none translate-y-1 scale-95 opacity-0',
-                'hover:scale-105 hover:text-moss',
-              )}
-            >
-              <GripVertical className="h-4 w-4" />
-            </div>
-          </div>
-        ) : null}
       </div>
 
       {captionText || item.tags?.length > 0 ? (
