@@ -83,6 +83,11 @@ function resolveParentTag(db, item, state, createdAt) {
     return getUncategorizedParentTag(db, createdAt);
   }
 
+  // Handle English "Uncategorized" equivalent
+  if (normalizedParentName.toLowerCase() === 'uncategorized') {
+    return getUncategorizedParentTag(db, createdAt);
+  }
+
   const existingParent = getTagByName(db, normalizedParentName);
   if (existingParent) {
     return existingParent.level === 1

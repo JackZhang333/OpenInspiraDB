@@ -167,7 +167,9 @@ function getOrganizationSubjectTagId(operation = {}) {
 }
 
 function isUncategorizedChildTag(tag) {
-  return tag?.level === TAG_LEVEL_CHILD && tag?.parentName === UNCATEGORIZED_TAG_NAME;
+  const isUncategorizedParent = tag?.parentName === UNCATEGORIZED_TAG_NAME ||
+    tag?.parentName?.toLowerCase() === 'uncategorized';
+  return tag?.level === TAG_LEVEL_CHILD && isUncategorizedParent;
 }
 
 function getOrganizationDeleteThreshold(snapshot = {}) {
@@ -542,6 +544,15 @@ export class InspiraDBApp {
     return {
       mode: nextMode,
     };
+  }
+
+  getSetting(key, fallback = '') {
+    return getAppSetting(this.db, key, fallback);
+  }
+
+  setSetting(key, value) {
+    setAppSetting(this.db, key, value, nowIso());
+    return { key, value };
   }
 
   getTagOrganizationStatus() {

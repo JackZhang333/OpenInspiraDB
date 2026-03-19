@@ -53,6 +53,60 @@ export const PRESET_TAXONOMY = [
   },
 ];
 
+export const PRESET_TAXONOMY_EN = [
+  {
+    name: 'Industry / Usage',
+    children: [
+      'E-commerce', 'Brand', 'UI', 'Poster', 'Packaging', 'Logo', 'Brochure', 'PPT', 'Web', 'Social',
+      'Short Video', 'Live Stream', 'Banner', 'Main Image', 'Detail Page', 'Roll-up', 'Display',
+      'Business Card', 'Flyer', 'Menu', 'Greeting Card', 'Invitation', 'Cultural Creative', 'IP',
+      'Illustration', 'Photography', 'Portrait', 'Product', 'Food', 'Architecture', 'Interior',
+      'Fashion', 'Beauty', 'Automotive', 'Medical', 'Education', 'Finance', 'Game', 'Anime', 'Festival',
+    ],
+  },
+  {
+    name: 'Style',
+    children: [
+      'Minimalist', 'Luxury', 'Chinese Trend', 'Neo-Chinese', 'Japanese', 'Korean', 'Western',
+      'Retro', 'Cyberpunk', 'Vaporwave', 'Acid', 'Memphis', 'Flat', 'Gradient', 'Texture',
+      'Hand-drawn', 'Graffiti', 'Paper-cut', 'Ink', 'Oil Painting', 'Tech', 'Futuristic',
+      'Business', 'Artistic', 'Fresh', 'Dark', 'Cool', 'Warm', 'Bright', 'Dreamy', 'Playful',
+      'Film', 'Hong Kong Style', 'Instagram', 'C4D', '3D', 'Realistic', 'Abstract', 'Geometric',
+      'Lines', 'Blocks', 'Collage', 'Glitch', 'Diffusion', 'Glassmorphism', 'New Ugly',
+      'Classical', 'Royal', 'Industrial', 'Natural', 'Sporty', 'Street', 'Trendy', 'Elegant',
+    ],
+  },
+  {
+    name: 'Color',
+    children: [
+      'Red', 'Pink', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Black', 'White',
+      'Gray', 'Gold', 'Silver', 'Colorful', 'Monochrome', 'Contrast', 'Same Tone', 'Low Saturation',
+      'High Saturation', 'Macaron', 'Morandi', 'Klein Blue', 'Chinese Red', 'Black Gold',
+      'Red White', 'Blue White', 'Yellow Green', 'Pink Blue', 'Orange Blue', 'Purple Pink',
+      'Warm Tone', 'Cool Tone', 'Neutral', 'Earth Tone', 'Fluorescent', 'Metallic', 'Transparent',
+      'Gradient', 'Neon', 'Vintage',
+    ],
+  },
+  {
+    name: 'Composition / Form',
+    children: [
+      'Centered', 'Left-Right Split', 'Top-Bottom Split', 'Full Bleed', 'White Space',
+      'Symmetrical', 'Asymmetrical', 'Grid', 'Radial', 'Surrounding', 'Overlay', 'Interleaved',
+      'Top View', 'Eye Level', 'Low Angle', 'Close-up', 'Panorama', 'Horizontal', 'Vertical',
+      'Square', 'Long Image', 'Multi-image', 'Single Image', 'Text-focused', 'Image-focused',
+      'Icon-focused', 'Simple Composition', 'Complex Composition', 'Dynamic', 'Static',
+    ],
+  },
+  {
+    name: 'Mood / Atmosphere',
+    children: [
+      'Premium', 'Simple', 'Lively', 'Festive', 'Serious', 'Playful', 'Relaxed', 'Healing',
+      'Mysterious', 'Tech-savvy', 'Futuristic', 'Nostalgic', 'Artistic', 'Business-like',
+      'Luxurious', 'Trendy', 'Cute', 'Grand', 'Exquisite', 'Rough',
+    ],
+  },
+];
+
 export const PRESET_PARENT_TAGS = PRESET_TAXONOMY.map((entry) => entry.name);
 const PRESET_CHILD_PARENT_MAP = new Map(
   PRESET_TAXONOMY.flatMap((group) => group.children.map((child) => [child, group.name])),
