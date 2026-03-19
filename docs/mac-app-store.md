@@ -6,6 +6,7 @@ This project includes a basic `electron-builder` setup for Mac App Store packagi
 
 - `npm run dist:mas-dev`: build a local development-signed universal (`x86_64 + arm64`) Mac App Store package using `electron-builder.mas-dev.cjs`
 - `npm run dist:mas`: build a distribution-signed universal (`x86_64 + arm64`) `mas` package for upload
+- `npm run dist:mas:ready`: build the universal MAS package, verify it, and write an upload summary to `release/mas-upload-summary.txt`
 - `npm run dist:dmg`: build a DMG package for direct distribution
 - `npm run icon:mac`: generate `build/icon.icns` from `build/icon-1024.png`
 - `build/entitlements.mas.plist`: main app entitlements
@@ -41,6 +42,8 @@ Before running `npm run dist:mas-dev`, copy your installed Mac App Store develop
 
 The signed development app bundle will be emitted to `release/mas-universal/InspiraDB.app`.
 
+For `mas` and `mas-dev`, the internal `CFBundleVersion` is now generated automatically from the current UTC timestamp, so repeated uploads do not require manually editing `package.json`.
+
 Then open the generated app from the `release/` directory and verify:
 
 - image import from the system file picker
@@ -70,6 +73,14 @@ npm run dist:dmg:unsigned
 The current verified requirement for this machine is the installer signing identity `3rd Party Mac Developer Installer`. The app bundle is signed with `Apple Distribution`, and the final `.pkg` is produced by `productbuild` using the installer certificate.
 
 The signed distribution app bundle is emitted to `release/mas-universal/InspiraDB.app`, and the uploadable installer is emitted to `release/InspiraDB-0.2.0-universal.pkg`.
+
+If you want a single command that both builds and verifies the upload artifact, use:
+
+```bash
+npm run dist:mas:ready
+```
+
+It will print the generated `CFBundleVersion`, verify the universal architectures and package signature, and save the final upload path to `release/mas-upload-summary.txt`.
 
 ## App Review checklist
 
