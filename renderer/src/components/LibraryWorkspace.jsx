@@ -147,23 +147,23 @@ export function LibraryWorkspace({
         </div>
 
         {!queryDraft && !hasTagFilter ? (
-          <div className="mx-auto mt-3 flex max-w-2xl items-center gap-2 text-[11px] text-ink/30">
+          <div className="mx-auto mt-3 flex max-w-2xl items-center gap-2 text-[11px] text-ink/60">
             <span>试试：</span>
             <button
               onClick={() => onQueryDraftChange('阳光明媚的海滩')}
-              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+              className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               阳光明媚的海滩
             </button>
             <button
               onClick={() => onQueryDraftChange('科技感产品图')}
-              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+              className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               科技感产品图
             </button>
             <button
               onClick={() => onQueryDraftChange('温暖的室内')}
-              className="rounded-full bg-white/80 px-2.5 py-0.5 transition hover:bg-white hover:text-ink/50"
+              className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               温暖的室内
             </button>

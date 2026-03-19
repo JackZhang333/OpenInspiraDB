@@ -321,6 +321,18 @@ function registerIpcHandlers() {
     return inspiraApp.deleteTag(tagId);
   });
 
+  ipcMain.handle('inspiradb:preview-tag-organization', () => {
+    return inspiraApp.previewTagOrganization();
+  });
+
+  ipcMain.handle('inspiradb:apply-tag-organization-plan', (_, payload = {}) => {
+    return inspiraApp.applyTagOrganizationPlan(payload);
+  });
+
+  ipcMain.handle('inspiradb:get-tag-organization-status', () => {
+    return inspiraApp.getTagOrganizationStatus();
+  });
+
   ipcMain.handle('inspiradb:get-tag-filter-mode', () => {
     return inspiraApp.getTagFilterMode();
   });

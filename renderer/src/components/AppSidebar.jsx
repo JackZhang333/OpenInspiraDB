@@ -176,6 +176,50 @@ function isDraftId(value) {
   return typeof value === 'string' && value.startsWith('draft-');
 }
 
+function formatOrganizationCadence(status) {
+  if (!status?.lastOrganizedAt) {
+    return '还没有整理记录，建议现在跑一次 AI 整理。';
+  }
+
+  if (typeof status.daysSinceLastOrganization !== 'number') {
+    return '已记录上次整理时间。';
+  }
+
+  return status.recommended
+    ? `距上次整理已 ${status.daysSinceLastOrganization} 天，建议重新整理。`
+    : `距上次整理 ${status.daysSinceLastOrganization} 天，当前无需频繁整理。`;
+}
+
+const ORGANIZATION_GROUP_LABELS = {
+  create: '新增',
+  rename: '重命名',
+  merge: '合并',
+  move: '移动',
+  delete: '删除',
+};
+
+function renderOrganizationOperationTitle(operation) {
+  if (operation.kind === 'create') {
+    return operation.level === 1
+      ? `新增一级分类「${operation.name}」`
+      : `新增标签「${operation.name}」到「${operation.parentName}」`;
+  }
+
+  if (operation.kind === 'rename') {
+    return `将「${operation.currentName || operation.tagId}」改成「${operation.nextName}」`;
+  }
+
+  if (operation.kind === 'merge') {
+    return `将「${operation.currentName || operation.sourceTagId}」合并到「${operation.targetTagName}」`;
+  }
+
+  if (operation.kind === 'move') {
+    return `将「${operation.currentName || operation.tagId}」移动到「${operation.targetParentName}」`;
+  }
+
+  return `删除「${operation.currentName || operation.tagId}」`;
+}
+
 export function TagSettingsDialog({
   open,
   saving,
@@ -184,11 +228,18 @@ export function TagSettingsDialog({
   onCreateTag,
   onUpdateTag,
   onDeleteTag,
+  onGetOrganizationStatus,
+  onPreviewOrganization,
+  onApplyOrganizationPlan,
 }) {
   const initialTreeRef = React.useRef([]);
   const [draftGroups, setDraftGroups] = React.useState([]);
   const [newParentName, setNewParentName] = React.useState('');
   const [localError, setLocalError] = React.useState('');
+  const [organizationStatus, setOrganizationStatus] = React.useState(null);
+  const [organizationPreview, setOrganizationPreview] = React.useState(null);
+  const [organizationLoading, setOrganizationLoading] = React.useState(false);
+  const [organizationApplying, setOrganizationApplying] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) {
@@ -196,6 +247,10 @@ export function TagSettingsDialog({
       setDraftGroups([]);
       setNewParentName('');
       setLocalError('');
+      setOrganizationStatus(null);
+      setOrganizationPreview(null);
+      setOrganizationLoading(false);
+      setOrganizationApplying(false);
       return;
     }
 
@@ -204,11 +259,30 @@ export function TagSettingsDialog({
     setDraftGroups(nextDraft);
     setNewParentName('');
     setLocalError('');
+    setOrganizationPreview(null);
+
+    Promise.resolve(onGetOrganizationStatus?.())
+      .then((status) => {
+        if (status) {
+          setOrganizationStatus(status);
+        }
+      })
+      .catch(() => {});
   }, [open]);
 
   if (!open) {
     return null;
   }
+
+  const groupedOrganizationOperations = React.useMemo(() => {
+    const groups = new Map();
+    for (const operation of organizationPreview?.operations || []) {
+      const bucket = groups.get(operation.kind) || [];
+      bucket.push(operation);
+      groups.set(operation.kind, bucket);
+    }
+    return Array.from(groups.entries());
+  }, [organizationPreview]);
 
   const updateGroup = (groupId, updater) => {
     setDraftGroups((currentGroups) => currentGroups.map((group) => (
@@ -405,6 +479,77 @@ export function TagSettingsDialog({
     onClose?.();
   };
 
+  const handlePreviewOrganization = async () => {
+    setLocalError('');
+    setOrganizationLoading(true);
+
+    try {
+      const preview = await onPreviewOrganization?.();
+      setOrganizationPreview(preview || null);
+      if (preview) {
+        setOrganizationStatus({
+          lastOrganizedAt: preview.lastOrganizedAt,
+          daysSinceLastOrganization: preview.daysSinceLastOrganization,
+          recommended: preview.recommended,
+        });
+      }
+    } catch (error) {
+      setLocalError(String(error?.message || error || 'AI 整理预览生成失败'));
+    } finally {
+      setOrganizationLoading(false);
+    }
+  };
+
+  const handleDismissOrganizationOperation = (operationId) => {
+    setOrganizationPreview((currentPreview) => {
+      if (!currentPreview) {
+        return currentPreview;
+      }
+
+      const nextOperations = (currentPreview.operations || []).filter((operation) => operation.id !== operationId);
+      return {
+        ...currentPreview,
+        operations: nextOperations,
+        summary: {
+          ...currentPreview.summary,
+          createCount: nextOperations.filter((item) => item.kind === 'create').length,
+          renameCount: nextOperations.filter((item) => item.kind === 'rename').length,
+          mergeCount: nextOperations.filter((item) => item.kind === 'merge').length,
+          moveCount: nextOperations.filter((item) => item.kind === 'move').length,
+          deleteCount: nextOperations.filter((item) => item.kind === 'delete').length,
+        },
+      };
+    });
+  };
+
+  const handleApplyOrganization = async () => {
+    const operations = organizationPreview?.operations || [];
+    if (!operations.length) {
+      return;
+    }
+
+    setLocalError('');
+    setOrganizationApplying(true);
+
+    try {
+      const result = await onApplyOrganizationPlan?.({ operations });
+      const nextTree = result?.tagTree || tagTree;
+      const nextDraft = cloneTagTreeToDraft(nextTree);
+      initialTreeRef.current = cloneTagTreeToDraft(nextTree);
+      setDraftGroups(nextDraft);
+      setOrganizationPreview(null);
+      setOrganizationStatus({
+        lastOrganizedAt: result?.lastOrganizedAt || '',
+        daysSinceLastOrganization: result?.daysSinceLastOrganization ?? 0,
+        recommended: Boolean(result?.recommended),
+      });
+    } catch (error) {
+      setLocalError(String(error?.message || error || 'AI 整理应用失败'));
+    } finally {
+      setOrganizationApplying(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/45 p-6 backdrop-blur-sm">
       <div className="flex max-h-[88vh] w-full max-w-[1080px] flex-col overflow-hidden rounded-[28px] border border-clay/15 bg-[#f7faf4] shadow-[0_28px_80px_rgba(16,24,20,0.22)]">
@@ -413,16 +558,106 @@ export function TagSettingsDialog({
             <div className="text-[24px] font-bold tracking-tight text-ink">标签管理台</div>
             <div className="mt-1 text-sm text-ink/45">在这里整理一级分类和二级标签，最后统一提交保存。</div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-ink/40 transition hover:bg-clay/10 hover:text-ink/70"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handlePreviewOrganization}
+              disabled={organizationLoading || organizationApplying || saving}
+              className="h-11 rounded-2xl border-moss/15 bg-white px-5 text-moss hover:bg-moss/5"
+            >
+              {organizationLoading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Lightbulb className="mr-1.5 h-4 w-4" />}
+              {organizationLoading ? '整理中...' : 'AI 整理'}
+            </Button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full p-2 text-ink/40 transition hover:bg-clay/10 hover:text-ink/70"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
+          <div className="mb-6 rounded-[24px] border border-moss/10 bg-white/85 p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-ink">AI 整理节奏</div>
+                <div className="mt-1 text-sm text-ink/50">{formatOrganizationCadence(organizationStatus)}</div>
+              </div>
+              <div className={cn(
+                'rounded-full px-3 py-1 text-xs font-semibold',
+                organizationStatus?.recommended
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-moss/10 text-moss',
+              )}>
+                {organizationStatus?.recommended ? '建议整理' : '状态稳定'}
+              </div>
+            </div>
+          </div>
+
+          {organizationPreview ? (
+            <div className="mb-6 rounded-[24px] border border-moss/15 bg-white/90 p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-base font-semibold text-ink">AI 整理预览</div>
+                  <div className="mt-1 text-sm text-ink/50">
+                    共 {organizationPreview.summary?.totalTags || 0} 个标签，低频标签 {organizationPreview.summary?.lowUsageTagCount || 0} 个，预计影响 {organizationPreview.affectedImageCount || 0} 张图片。
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(ORGANIZATION_GROUP_LABELS).map(([kind, label]) => (
+                    <div key={kind} className="rounded-full bg-[#f4f8ef] px-3 py-1 text-xs font-medium text-ink/60">
+                      {label} {organizationPreview.summary?.[`${kind}Count`] || 0}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {groupedOrganizationOperations.map(([kind, operations]) => (
+                  <div key={kind} className="rounded-[20px] bg-[#f4f8ef] p-4">
+                    <div className="mb-3 text-sm font-semibold text-ink">{ORGANIZATION_GROUP_LABELS[kind]}</div>
+                    <div className="space-y-2">
+                      {operations.map((operation) => (
+                        <div key={operation.id} className="flex items-start justify-between gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium text-ink">{renderOrganizationOperationTitle(operation)}</div>
+                            <div className="mt-1 text-xs text-ink/50">
+                              {operation.reason || 'AI 认为这样更利于统一检索和清理冗余标签。'}
+                              {typeof operation.affectedUsageCount === 'number' ? ` · 当前引用 ${operation.affectedUsageCount} 次` : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDismissOrganizationOperation(operation.id)}
+                            className="rounded-full p-1.5 text-ink/35 transition hover:bg-rose-50 hover:text-rose-600"
+                            aria-label="移除此建议"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <Button
+                  type="button"
+                  onClick={handleApplyOrganization}
+                  disabled={organizationApplying || saving || !(organizationPreview.operations || []).length}
+                  className="h-11 rounded-2xl px-5"
+                >
+                  {organizationApplying ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+                  {organizationApplying ? '应用中...' : '应用整理'}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mb-6 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-white/80 p-5 shadow-sm">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">一级标签</div>
             <div className="flex flex-col gap-3 md:flex-row">

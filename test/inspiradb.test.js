@@ -292,15 +292,16 @@ test('import -> analyze -> search -> user override rules', async () => {
       embedTextDeterministic(buildEmbeddingText('这是人工修订的品牌海报参考描述', tagResult.tagNames)),
     );
 
-    await app.rebuildImageAnalysis(imageId);
-    await waitForImageStatus(app, imageId, 'ready', 8000);
+    const rebuildResult = await app.rebuildImageAnalysis(imageId);
+    assert.equal(rebuildResult.status, 'ready');
 
     const detailAfterReanalyze = app.getImageDetail(imageId);
     assert.equal(detailAfterReanalyze.activeCaption?.source, 'user');
     assert.equal(detailAfterReanalyze.activeCaption?.content, '这是人工修订的品牌海报参考描述');
+    assert.equal(detailAfterReanalyze.image.active_tag_source, 'ai');
     assert.deepEqual(
       detailAfterReanalyze.effectiveTags.map((tag) => tag.name).sort(),
-      ['品牌', '极简', '海报'].sort(),
+      ['海报', '极简', '留白'].sort(),
     );
 
     const embeddingAfterReanalyze = app.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId });
@@ -309,7 +310,7 @@ test('import -> analyze -> search -> user override rules', async () => {
       embedTextDeterministic(buildEmbeddingText(detailAfterReanalyze.activeCaption.content, detailAfterReanalyze.effectiveTagNames)),
     );
 
-    const searchResult = await app.searchImages('品牌海报', ['品牌']);
+    const searchResult = await app.searchImages('海报', ['海报']);
     assert.ok(searchResult.total >= 1);
     assert.ok(searchResult.items.some((item) => item.id === imageId));
   } finally {
@@ -1498,5 +1499,167 @@ test('tag filter mode persists and tag CRUD manages hierarchy', async () => {
     assert.equal(reopened.getTagFilterMode(), 'or');
   } finally {
     reopened.close();
+  }
+});
+
+test('ai tag organization previews and applies batched create/merge/move/delete operations', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-tag-organization-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const styleGroup = app.createTag({ name: '风格', level: 1 });
+    const minimalTag = app.createTag({ name: '极简', level: 2, parentId: styleGroup.id });
+    const simpleTag = app.createTag({ name: '简约', level: 2, parentId: styleGroup.id });
+    const nicheTag = app.createTag({ name: '冷门标签', level: 2 });
+    const nightTag = app.createTag({ name: '夜景', level: 2 });
+
+    const imageMinimal = insertReadyImageWithTagIds(app, {
+      fileName: 'minimal.jpg',
+      hash: 'org-minimal',
+      caption: '极简风格海报参考。',
+      tagIds: [minimalTag.id],
+      vector: embedTextDeterministic('极简 海报'),
+    });
+    const imageSimple = insertReadyImageWithTagIds(app, {
+      fileName: 'simple.jpg',
+      hash: 'org-simple',
+      caption: '简约风格页面。',
+      tagIds: [simpleTag.id],
+      vector: embedTextDeterministic('简约 页面'),
+    });
+    const imageNight = insertReadyImageWithTagIds(app, {
+      fileName: 'night.jpg',
+      hash: 'org-night',
+      caption: '夜景街头摄影。',
+      tagIds: [nightTag.id, nicheTag.id],
+      vector: embedTextDeterministic('夜景 街头 摄影'),
+    });
+
+    app.aiService.zhipuService.request = async (endpoint, payload = {}) => {
+      if (endpoint === '/embeddings') {
+        return {
+          data: [
+            {
+              embedding: embedTextDeterministic(payload.input),
+            },
+          ],
+        };
+      }
+
+      if (endpoint === '/chat/completions') {
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  operations: [
+                    {
+                      kind: 'create',
+                      level: 1,
+                      name: '场景',
+                      source: 'generated',
+                      reason: '补充一个更明确的场景类一级分类。',
+                    },
+                    {
+                      kind: 'create',
+                      level: 2,
+                      name: '雨夜街头',
+                      parentName: '场景',
+                      source: 'generated',
+                      reason: '这是当前库里没有的具体场景词。',
+                    },
+                    {
+                      kind: 'merge',
+                      sourceTagId: simpleTag.id,
+                      targetTagName: '极简',
+                      targetParentName: '风格',
+                      source: 'existing',
+                      reason: '简约和极简语义高度重合。',
+                    },
+                    {
+                      kind: 'move',
+                      tagId: nightTag.id,
+                      targetParentName: '场景',
+                      reason: '夜景更适合作为场景标签管理。',
+                    },
+                    {
+                      kind: 'delete',
+                      tagId: nicheTag.id,
+                      reason: '低频且信息价值不足。',
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        };
+      }
+
+      throw new Error(`UNSUPPORTED_TEST_ENDPOINT:${endpoint}`);
+    };
+
+    const preview = await app.previewTagOrganization();
+    assert.equal(preview.summary.createCount, 2);
+    assert.equal(preview.summary.mergeCount, 1);
+    assert.equal(preview.summary.moveCount, 1);
+    assert.equal(preview.summary.deleteCount, 1);
+    assert.equal(preview.affectedImageCount, 2);
+    assert.ok(preview.operations.some((operation) => operation.kind === 'merge' && operation.currentName === '简约'));
+
+    const applyResult = app.applyTagOrganizationPlan({ operations: preview.operations });
+    assert.equal(applyResult.appliedCount, 5);
+    assert.equal(applyResult.skippedCount, 0);
+    assert.equal(applyResult.affectedImageCount, 2);
+    assert.ok(applyResult.lastOrganizedAt);
+
+    const tree = app.listTagTree();
+    const sceneGroup = tree.find((group) => group.name === '场景');
+    assert.ok(sceneGroup);
+    assert.ok(sceneGroup.children.some((tag) => tag.name === '夜景'));
+    assert.ok(sceneGroup.children.some((tag) => tag.name === '雨夜街头'));
+    assert.ok(!tree.some((group) => (group.children || []).some((tag) => tag.name === '简约')));
+    assert.ok(!tree.some((group) => (group.children || []).some((tag) => tag.name === '冷门标签')));
+
+    const mergedRelation = app.db.get(
+      `SELECT tag_id
+       FROM image_tags
+       WHERE image_id = :imageId
+         AND tag_id = :tagId
+       LIMIT 1`,
+      {
+        imageId: imageSimple,
+        tagId: minimalTag.id,
+      },
+    );
+    assert.ok(mergedRelation);
+
+    const deletedRelation = app.db.get(
+      `SELECT id
+       FROM image_tags
+       WHERE image_id = :imageId
+         AND tag_id = :tagId
+       LIMIT 1`,
+      {
+        imageId: imageNight,
+        tagId: nicheTag.id,
+      },
+    );
+    assert.equal(deletedRelation, undefined);
+
+    const refreshJobs = app.db.all(
+      `SELECT image_id
+       FROM analysis_jobs
+       WHERE job_type = 'refresh_embedding'
+       ORDER BY image_id ASC`,
+    );
+    assert.deepEqual(
+      refreshJobs.map((row) => Number(row.image_id)),
+      [imageSimple, imageNight],
+    );
+
+    const organizationStatus = app.getTagOrganizationStatus();
+    assert.equal(organizationStatus.recommended, false);
+  } finally {
+    app.close();
   }
 });

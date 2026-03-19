@@ -92,22 +92,20 @@ export const GalleryCard = memo(function GalleryCard({
           ) : null}
 
           {item.tags?.length > 0 ? (
-            <div className="mt-1.5 flex items-center gap-1 overflow-hidden">
+            <div className="mt-1.5 flex items-center gap-1">
               <div className="flex flex-nowrap items-center gap-1 overflow-hidden">
-                {item.tags.slice(0, 3).map((tag) => (
+                {item.tags.map((tag, index) => (
                   <span
                     key={tag}
-                    className="shrink-0 rounded-full bg-clay/10 px-1.5 py-0.5 text-[9px] text-ink/50"
+                    className="shrink-0 rounded-full bg-clay/20 px-1.5 py-0.5 text-[9px] text-ink/70"
                   >
                     {tag}
                   </span>
                 ))}
-                {item.tags.length > 3 && (
-                  <span className="shrink-0 rounded-full bg-clay/10 px-1.5 py-0.5 text-[9px] text-ink/50">
-                    +{item.tags.length - 3}
-                  </span>
-                )}
               </div>
+              <span className="shrink-0 text-[9px] text-ink/60">
+                {item.tags.length}
+              </span>
             </div>
           ) : null}
         </div>

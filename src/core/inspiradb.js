@@ -22,7 +22,7 @@ import {
 } from '../utils/files.js';
 import { md5File } from '../utils/hash.js';
 import { cosineDistance } from '../utils/vector.js';
-import { uniqueNonEmptyTags } from '../utils/text.js';
+import { normalizeTagName, uniqueNonEmptyTags } from '../utils/text.js';
 import {
   buildXmpSidecarPathForImage,
   readXmpMetadataForImage,
@@ -32,7 +32,11 @@ import {
   DEFAULT_TAG_FILTER_MODE,
   TAG_LEVEL_CHILD,
   TAG_LEVEL_PARENT,
+  ensureParentTag,
+  findPresetTaxonomyMatch,
+  getAppSetting,
   getTagById,
+  getTagByName,
   getTagFilterMode as readTagFilterMode,
   getUncategorizedParentTag,
   listEffectiveTagRecords,
@@ -47,6 +51,16 @@ import {
   cleanupUnusedPresetTags,
   ensureSecondaryTag,
 } from './tag-store.js';
+import {
+  isValidGeneratedTagName,
+  MAX_ORGANIZATION_NEW_CHILD_COUNT,
+  MAX_ORGANIZATION_NEW_PARENT_COUNT,
+  normalizeOrganizationOperations,
+  normalizeOrganizationSource,
+  summarizeOrganizationOperations,
+  TAG_ORGANIZATION_LOW_USAGE_THRESHOLD,
+  TAG_ORGANIZATION_RECOMMENDED_INTERVAL_DAYS,
+} from './tag-organization.js';
 import { createLogger } from '../utils/logger.js';
 import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { RoutedAiService } from '../services/ai-factory.js';
@@ -128,6 +142,41 @@ function normalizeSearchText(text) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function flattenTagTree(tagTree = []) {
+  return (tagTree || []).flatMap((group) => [
+    {
+      id: Number(group.id),
+      name: group.name,
+      level: TAG_LEVEL_PARENT,
+      parentId: null,
+      isSystem: Boolean(group.isSystem),
+      usageCount: Number(group.usageCount || 0),
+    },
+    ...((group.children || []).map((child) => ({
+      id: Number(child.id),
+      name: child.name,
+      level: TAG_LEVEL_CHILD,
+      parentId: Number(group.id),
+      parentName: group.name,
+      isSystem: Boolean(child.isSystem),
+      usageCount: Number(child.usageCount || 0),
+    }))),
+  ]);
+}
+
+function daysSinceIso(value) {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(String(value));
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
 }
 
 const SEARCH_INTENT_RULES = [
@@ -444,6 +493,258 @@ export class InspiraDBApp {
     };
   }
 
+  getTagOrganizationStatus() {
+    const lastOrganizedAt = getAppSetting(this.db, 'last_tag_organization_at', '');
+    const daysSinceLastOrganization = daysSinceIso(lastOrganizedAt);
+
+    return {
+      lastOrganizedAt: lastOrganizedAt || '',
+      daysSinceLastOrganization,
+      recommended: daysSinceLastOrganization == null
+        || daysSinceLastOrganization >= TAG_ORGANIZATION_RECOMMENDED_INTERVAL_DAYS,
+      intervalDays: TAG_ORGANIZATION_RECOMMENDED_INTERVAL_DAYS,
+    };
+  }
+
+  buildTagOrganizationSnapshot() {
+    const tagTree = listTagTree(this.db);
+    const flatTags = flattenTagTree(tagTree);
+    const tagById = new Map(flatTags.map((tag) => [Number(tag.id), tag]));
+    const tagByName = new Map(flatTags.map((tag) => [String(tag.name), tag]));
+
+    return {
+      tagTree,
+      flatTags,
+      tagById,
+      tagByName,
+      lowUsageTagCount: flatTags.filter(
+        (tag) => tag.level === TAG_LEVEL_CHILD && Number(tag.usageCount || 0) <= TAG_ORGANIZATION_LOW_USAGE_THRESHOLD,
+      ).length,
+    };
+  }
+
+  sanitizeTagOrganizationOperations(rawOperations, snapshot = this.buildTagOrganizationSnapshot()) {
+    const normalized = normalizeOrganizationOperations(rawOperations);
+    const operations = [];
+    let newParentCount = 0;
+    let newChildCount = 0;
+
+    for (const operation of normalized) {
+      if (operation.kind === 'create') {
+        if (snapshot.tagByName.has(operation.name)) {
+          continue;
+        }
+
+        if (operation.source === 'preset') {
+          if (operation.level === TAG_LEVEL_CHILD) {
+            const presetMatch = findPresetTaxonomyMatch(operation.parentName, operation.name);
+            if (!presetMatch) {
+              continue;
+            }
+            operations.push({
+              ...operation,
+              name: presetMatch.childName,
+              parentName: presetMatch.parentName,
+            });
+          } else {
+            operations.push(operation);
+          }
+          continue;
+        }
+
+        if (!isValidGeneratedTagName(operation.name)) {
+          continue;
+        }
+
+        if (operation.level === TAG_LEVEL_PARENT) {
+          if (newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
+            continue;
+          }
+          newParentCount += 1;
+          operations.push(operation);
+          continue;
+        }
+
+        if (!operation.parentName || !isValidGeneratedTagName(operation.parentName)) {
+          continue;
+        }
+        const parentCollision = snapshot.tagByName.get(operation.parentName);
+        if (parentCollision && parentCollision.level !== TAG_LEVEL_PARENT) {
+          continue;
+        }
+        if (newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
+          continue;
+        }
+        newChildCount += 1;
+        operations.push(operation);
+        continue;
+      }
+
+      if (operation.kind === 'rename') {
+        const current = snapshot.tagById.get(Number(operation.tagId));
+        if (!current || current.isSystem) {
+          continue;
+        }
+        if (normalizeTagName(current.name) === operation.nextName) {
+          continue;
+        }
+        const existing = snapshot.tagByName.get(operation.nextName);
+        if (!existing && !isValidGeneratedTagName(operation.nextName)) {
+          continue;
+        }
+        operations.push(operation);
+        continue;
+      }
+
+      if (operation.kind === 'merge') {
+        const current = snapshot.tagById.get(Number(operation.sourceTagId));
+        if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
+          continue;
+        }
+
+        const existing = snapshot.tagByName.get(operation.targetTagName);
+        if (!existing) {
+          if (operation.source === 'preset') {
+            const presetMatch = findPresetTaxonomyMatch(operation.targetParentName, operation.targetTagName);
+            if (!presetMatch) {
+              continue;
+            }
+            operations.push({
+              ...operation,
+              targetTagName: presetMatch.childName,
+              targetParentName: presetMatch.parentName,
+            });
+            continue;
+          }
+
+          if (!isValidGeneratedTagName(operation.targetTagName)) {
+            continue;
+          }
+          if (!operation.targetParentName || !isValidGeneratedTagName(operation.targetParentName)) {
+            continue;
+          }
+          const parentCollision = snapshot.tagByName.get(operation.targetParentName);
+          if (parentCollision && parentCollision.level !== TAG_LEVEL_PARENT) {
+            continue;
+          }
+          if (newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
+            continue;
+          }
+          newChildCount += 1;
+        }
+
+        operations.push(operation);
+        continue;
+      }
+
+      if (operation.kind === 'move') {
+        const current = snapshot.tagById.get(Number(operation.tagId));
+        if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
+          continue;
+        }
+        if (!operation.targetParentName) {
+          continue;
+        }
+
+        const existingParent = snapshot.tagByName.get(operation.targetParentName);
+        if (!existingParent) {
+          if (!isValidGeneratedTagName(operation.targetParentName)) {
+            continue;
+          }
+          if (newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
+            continue;
+          }
+          newParentCount += 1;
+        } else if (existingParent.level !== TAG_LEVEL_PARENT) {
+          continue;
+        }
+
+        operations.push(operation);
+        continue;
+      }
+
+      if (operation.kind === 'delete') {
+        const current = snapshot.tagById.get(Number(operation.tagId));
+        if (!current || current.isSystem) {
+          continue;
+        }
+        operations.push(operation);
+      }
+    }
+
+    return operations;
+  }
+
+  collectAffectedImageIdsForOrganization(operations = [], snapshot = this.buildTagOrganizationSnapshot()) {
+    const affectedTagIds = new Set();
+
+    for (const operation of operations) {
+      if (operation.kind === 'rename' || operation.kind === 'move' || operation.kind === 'delete') {
+        const current = snapshot.tagById.get(Number(operation.tagId));
+        if (current?.level === TAG_LEVEL_CHILD) {
+          affectedTagIds.add(Number(operation.tagId));
+        }
+      }
+
+      if (operation.kind === 'merge') {
+        const current = snapshot.tagById.get(Number(operation.sourceTagId));
+        if (current?.level === TAG_LEVEL_CHILD) {
+          affectedTagIds.add(Number(operation.sourceTagId));
+        }
+      }
+    }
+
+    if (!affectedTagIds.size) {
+      return [];
+    }
+
+    const { clause, params } = buildInClauseParams('tag', Array.from(affectedTagIds));
+    const rows = this.db.all(
+      `SELECT DISTINCT image_id
+       FROM image_tags
+       WHERE tag_id IN (${clause})`,
+      params,
+    );
+
+    return rows.map((row) => Number(row.image_id)).filter((value) => Number.isInteger(value) && value > 0);
+  }
+
+  decorateTagOrganizationOperations(operations = [], snapshot = this.buildTagOrganizationSnapshot()) {
+    return operations.map((operation) => {
+      const currentTag = operation.kind === 'merge'
+        ? snapshot.tagById.get(Number(operation.sourceTagId))
+        : snapshot.tagById.get(Number(operation.tagId));
+
+      return {
+        ...operation,
+        currentName: currentTag?.name || '',
+        currentParentName: currentTag?.parentName || '',
+        currentLevel: currentTag?.level || 0,
+        affectedUsageCount: Number(currentTag?.usageCount || 0),
+      };
+    });
+  }
+
+  async previewTagOrganization() {
+    const snapshot = this.buildTagOrganizationSnapshot();
+    const rawOperations = await this.aiService.previewTagOrganization();
+    const operations = this.sanitizeTagOrganizationOperations(rawOperations, snapshot);
+    const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
+    const summary = summarizeOrganizationOperations(operations);
+
+    return {
+      generatedAt: nowIso(),
+      summary: {
+        totalTags: snapshot.flatTags.length,
+        lowUsageTagCount: snapshot.lowUsageTagCount,
+        ...summary,
+      },
+      operations: this.decorateTagOrganizationOperations(operations, snapshot),
+      affectedImageCount: affectedImageIds.length,
+      ...this.getTagOrganizationStatus(),
+    };
+  }
+
   ensureImportCapacity() {
     const total = this.getImageCount();
     if (total < MAX_IMAGE_COUNT) {
@@ -725,6 +1026,325 @@ export class InspiraDBApp {
     return {
       deleted: true,
       tagId,
+    };
+  }
+
+  cleanupEmptyParentTags(updatedAt = nowIso()) {
+    const rows = this.db.all(
+      `SELECT t.id
+       FROM tags t
+       LEFT JOIN tags c ON c.parent_id = t.id
+       WHERE t.level = :level
+         AND t.is_system = 0
+       GROUP BY t.id
+       HAVING COUNT(c.id) = 0`,
+      { level: TAG_LEVEL_PARENT },
+    );
+
+    for (const row of rows) {
+      this.db.run(
+        `DELETE FROM tags
+         WHERE id = :tagId`,
+        {
+          tagId: Number(row.id),
+          updatedAt,
+        },
+      );
+    }
+  }
+
+  markImagesForEmbeddingRefresh(imageIds = [], updatedAt = nowIso()) {
+    const normalizedImageIds = normalizeImageIds(imageIds);
+    if (!normalizedImageIds.length) {
+      return;
+    }
+
+    const { clause, params } = buildInClauseParams('image', normalizedImageIds);
+    this.db.run(
+      `UPDATE images
+       SET needs_embedding_refresh = 1,
+           updated_at = :updatedAt
+       WHERE id IN (${clause})`,
+      {
+        ...params,
+        updatedAt,
+      },
+    );
+
+    for (const imageId of normalizedImageIds) {
+      this.createAnalysisJob(imageId, {
+        jobType: 'refresh_embedding',
+        maxRetryCount: 2,
+        asTransaction: true,
+      });
+    }
+  }
+
+  resolveOrganizationTargetChildTag(operation, createdAt) {
+    const existing = getTagByName(this.db, operation.targetTagName);
+    if (existing) {
+      return existing.level === TAG_LEVEL_CHILD ? existing : null;
+    }
+
+    const source = normalizeOrganizationSource(operation.source);
+    if (source === 'preset') {
+      const presetMatch = findPresetTaxonomyMatch(operation.targetParentName, operation.targetTagName);
+      if (!presetMatch) {
+        return null;
+      }
+      const parentTag = ensureParentTag(this.db, presetMatch.parentName, { createdAt });
+      return ensureSecondaryTag(this.db, presetMatch.childName, {
+        parentId: parentTag?.id,
+        createdAt,
+      });
+    }
+
+    if (!isValidGeneratedTagName(operation.targetTagName)) {
+      return null;
+    }
+
+    const parentName = normalizeTagName(operation.targetParentName);
+    if (!parentName || !isValidGeneratedTagName(parentName)) {
+      return null;
+    }
+
+    const parentTag = ensureParentTag(this.db, parentName, { createdAt });
+    return ensureSecondaryTag(this.db, operation.targetTagName, {
+      parentId: parentTag?.id,
+      createdAt,
+    });
+  }
+
+  applySingleTagOrganizationOperation(operation, createdAt) {
+    if (operation.kind === 'create') {
+      if (operation.level === TAG_LEVEL_PARENT) {
+        const existing = getTagByName(this.db, operation.name);
+        if (existing) {
+          return existing.level === TAG_LEVEL_PARENT
+            ? { applied: false, skipped: 'TAG_ALREADY_EXISTS' }
+            : { applied: false, skipped: 'TAG_NAME_CONFLICT' };
+        }
+
+        const created = ensureParentTag(this.db, operation.name, { createdAt });
+        return { applied: Boolean(created), tag: created };
+      }
+
+      const existing = getTagByName(this.db, operation.name);
+      if (existing) {
+        return existing.level === TAG_LEVEL_CHILD
+          ? { applied: false, skipped: 'TAG_ALREADY_EXISTS' }
+          : { applied: false, skipped: 'TAG_NAME_CONFLICT' };
+      }
+
+      const parentTag = ensureParentTag(this.db, operation.parentName, { createdAt });
+      const created = ensureSecondaryTag(this.db, operation.name, {
+        parentId: parentTag?.id,
+        createdAt,
+      });
+      return { applied: Boolean(created), tag: created };
+    }
+
+    if (operation.kind === 'rename') {
+      const current = getTagById(this.db, operation.tagId);
+      if (!current || current.isSystem) {
+        return { applied: false, skipped: 'TAG_NOT_FOUND' };
+      }
+
+      const existing = getTagByName(this.db, operation.nextName);
+      if (existing && existing.id !== current.id) {
+        if (current.level === TAG_LEVEL_CHILD && existing.level === TAG_LEVEL_CHILD) {
+          return this.applySingleTagOrganizationOperation({
+            kind: 'merge',
+            sourceTagId: current.id,
+            targetTagName: existing.name,
+            targetParentName: existing.parentName,
+            source: 'existing',
+          }, createdAt);
+        }
+
+        if (current.level === TAG_LEVEL_PARENT && existing.level === TAG_LEVEL_PARENT) {
+          this.db.run(
+            `UPDATE tags
+             SET parent_id = :targetParentId,
+                 updated_at = :updatedAt
+             WHERE parent_id = :sourceParentId`,
+            {
+              targetParentId: existing.id,
+              sourceParentId: current.id,
+              updatedAt: createdAt,
+            },
+          );
+          this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
+          return { applied: true, mergedIntoTagId: existing.id };
+        }
+
+        return { applied: false, skipped: 'TAG_NAME_CONFLICT' };
+      }
+
+      this.db.run(
+        `UPDATE tags
+         SET name = :name,
+             updated_at = :updatedAt
+         WHERE id = :tagId`,
+        {
+          tagId: current.id,
+          name: operation.nextName,
+          updatedAt: createdAt,
+        },
+      );
+      return { applied: true, tag: getTagById(this.db, current.id) };
+    }
+
+    if (operation.kind === 'move') {
+      const current = getTagById(this.db, operation.tagId);
+      if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
+        return { applied: false, skipped: 'TAG_NOT_FOUND' };
+      }
+
+      let parentTag = getTagByName(this.db, operation.targetParentName);
+      if (!parentTag) {
+        if (!isValidGeneratedTagName(operation.targetParentName)) {
+          return { applied: false, skipped: 'PARENT_TAG_NOT_FOUND' };
+        }
+        parentTag = ensureParentTag(this.db, operation.targetParentName, { createdAt });
+      }
+
+      if (!parentTag || parentTag.level !== TAG_LEVEL_PARENT) {
+        return { applied: false, skipped: 'PARENT_TAG_NOT_FOUND' };
+      }
+
+      this.db.run(
+        `UPDATE tags
+         SET parent_id = :parentId,
+             updated_at = :updatedAt
+         WHERE id = :tagId`,
+        {
+          tagId: current.id,
+          parentId: parentTag.id,
+          updatedAt: createdAt,
+        },
+      );
+      return { applied: true, tag: getTagById(this.db, current.id) };
+    }
+
+    if (operation.kind === 'merge') {
+      const current = getTagById(this.db, operation.sourceTagId);
+      if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
+        return { applied: false, skipped: 'TAG_NOT_FOUND' };
+      }
+
+      const targetTag = this.resolveOrganizationTargetChildTag(operation, createdAt);
+      if (!targetTag || targetTag.level !== TAG_LEVEL_CHILD) {
+        return { applied: false, skipped: 'TARGET_TAG_NOT_FOUND' };
+      }
+
+      if (targetTag.id === current.id) {
+        return { applied: false, skipped: 'MERGE_TARGET_SAME' };
+      }
+
+      const relations = this.db.all(
+        `SELECT image_id, source
+         FROM image_tags
+         WHERE tag_id = :tagId`,
+        { tagId: current.id },
+      );
+
+      for (const relation of relations) {
+        this.db.run(
+          `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+           VALUES (:imageId, :tagId, :source, :createdAt)
+           ON CONFLICT(image_id, tag_id, source) DO NOTHING`,
+          {
+            imageId: Number(relation.image_id),
+            tagId: targetTag.id,
+            source: String(relation.source || 'ai'),
+            createdAt,
+          },
+        );
+      }
+
+      this.db.run('DELETE FROM image_tags WHERE tag_id = :tagId', { tagId: current.id });
+      this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
+      return { applied: true, mergedIntoTagId: targetTag.id };
+    }
+
+    if (operation.kind === 'delete') {
+      const current = getTagById(this.db, operation.tagId);
+      if (!current || current.isSystem) {
+        return { applied: false, skipped: 'TAG_NOT_FOUND' };
+      }
+
+      if (current.level === TAG_LEVEL_PARENT) {
+        const child = this.db.get(
+          `SELECT id
+           FROM tags
+           WHERE parent_id = :tagId
+           LIMIT 1`,
+          { tagId: current.id },
+        );
+        if (child) {
+          return { applied: false, skipped: 'TAG_HAS_CHILDREN' };
+        }
+        this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
+        return { applied: true };
+      }
+
+      this.db.run('DELETE FROM image_tags WHERE tag_id = :tagId', { tagId: current.id });
+      this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
+      return { applied: true };
+    }
+
+    return { applied: false, skipped: 'UNSUPPORTED_OPERATION' };
+  }
+
+  applyTagOrganizationPlan(payload = {}) {
+    const inputOperations = Array.isArray(payload) ? payload : payload.operations;
+    const snapshot = this.buildTagOrganizationSnapshot();
+    const operations = this.sanitizeTagOrganizationOperations(inputOperations, snapshot);
+    const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
+    const appliedOperations = [];
+    const skippedOperations = [];
+    const now = nowIso();
+
+    this.db.transaction(() => {
+      for (const operation of operations) {
+        try {
+          const result = this.applySingleTagOrganizationOperation(operation, now);
+          if (result?.applied) {
+            appliedOperations.push(operation);
+          } else {
+            skippedOperations.push({
+              ...operation,
+              reason: result?.skipped || 'SKIPPED',
+            });
+          }
+        } catch (error) {
+          skippedOperations.push({
+            ...operation,
+            reason: error?.code || error?.message || 'SKIPPED',
+          });
+        }
+      }
+
+      this.cleanupEmptyParentTags(now);
+
+      if (affectedImageIds.length) {
+        this.markImagesForEmbeddingRefresh(affectedImageIds, now);
+      }
+
+      if (appliedOperations.length) {
+        setAppSetting(this.db, 'last_tag_organization_at', now, now);
+      }
+    });
+
+    return {
+      appliedCount: appliedOperations.length,
+      skippedCount: skippedOperations.length,
+      appliedOperations,
+      skippedOperations,
+      affectedImageCount: affectedImageIds.length,
+      tagTree: this.listTagTree(),
+      ...this.getTagOrganizationStatus(),
     };
   }
 
@@ -1861,12 +2481,41 @@ export class InspiraDBApp {
       );
     });
 
-    await this.queue.drain();
+    const status = await this.waitForImageAnalysisSettled(imageId);
 
     return {
       imageId,
-      status: IMAGE_STATUS.QUEUED,
+      status,
     };
+  }
+
+  async waitForImageAnalysisSettled(imageId, timeoutMs = 120000) {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      await this.queue.drain();
+
+      const image = this.db.get(
+        `SELECT analysis_status
+         FROM images
+         WHERE id = :imageId`,
+        { imageId },
+      );
+
+      if (!image) {
+        throw new Error('IMAGE_NOT_FOUND');
+      }
+
+      if (image.analysis_status === IMAGE_STATUS.READY || image.analysis_status === IMAGE_STATUS.FAILED) {
+        return image.analysis_status;
+      }
+
+      await sleep(120);
+    }
+
+    const error = new Error('JOB_TIMEOUT');
+    error.code = 'JOB_TIMEOUT';
+    throw error;
   }
 
   async getFilterTags(query = '', selectedTagIds = [], filterMode = DEFAULT_TAG_FILTER_MODE) {

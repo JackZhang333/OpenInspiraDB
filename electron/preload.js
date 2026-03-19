@@ -66,6 +66,15 @@ contextBridge.exposeInMainWorld('inspira', {
   deleteTag(tagId) {
     return ipcRenderer.invoke('inspiradb:delete-tag', tagId);
   },
+  previewTagOrganization() {
+    return ipcRenderer.invoke('inspiradb:preview-tag-organization');
+  },
+  applyTagOrganizationPlan(payload) {
+    return ipcRenderer.invoke('inspiradb:apply-tag-organization-plan', payload);
+  },
+  getTagOrganizationStatus() {
+    return ipcRenderer.invoke('inspiradb:get-tag-organization-status');
+  },
   getTagFilterMode() {
     return ipcRenderer.invoke('inspiradb:get-tag-filter-mode');
   },

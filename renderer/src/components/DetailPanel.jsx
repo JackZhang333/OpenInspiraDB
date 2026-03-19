@@ -4,6 +4,7 @@ import {
   Check,
   Copy,
   Download,
+  Loader2,
   Pencil,
   Plus,
   RotateCcw,
@@ -40,6 +41,7 @@ export function DetailPanel({
   detail,
   loading,
   saving,
+  reanalyzing,
   copiedImageId,
   tagTree,
   onSaveMetadata,
@@ -379,46 +381,55 @@ export function DetailPanel({
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <Button type="button" className="w-full" onClick={handleStartEditing} disabled={saving}>
-              <Pencil className="mr-1.5 h-3.5 w-3.5" />
-              编辑信息
-            </Button>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                className={cn('flex-1', isCopied && 'bg-moss text-white hover:bg-moss/90')}
-                onClick={() => onCopy?.(detail.image.id)}
-                disabled={saving}
-              >
-                {isCopied ? (
-                  <Check className="mr-1.5 h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                {isCopied ? '已复制' : '复制'}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="flex-1"
-                onClick={() => onExport?.(detail.image.id)}
-                disabled={saving}
-              >
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                导出
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="flex-1"
-                onClick={() => onReanalyze?.()}
-                disabled={saving}
-              >
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                重新分析
-              </Button>
-            </div>
+            {reanalyzing ? (
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-moss/15 bg-moss/5 px-4 py-4 text-sm font-medium text-moss">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                AI 重新分析中...
+              </div>
+            ) : (
+              <>
+                <Button type="button" className="w-full" onClick={handleStartEditing} disabled={saving}>
+                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                  编辑信息
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={cn('flex-1', isCopied && 'bg-moss text-white hover:bg-moss/90')}
+                    onClick={() => onCopy?.(detail.image.id)}
+                    disabled={saving}
+                  >
+                    {isCopied ? (
+                      <Check className="mr-1.5 h-3.5 w-3.5" />
+                    ) : (
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    {isCopied ? '已复制' : '复制'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() => onExport?.(detail.image.id)}
+                    disabled={saving}
+                  >
+                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                    导出
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() => onReanalyze?.()}
+                    disabled={saving}
+                  >
+                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                    重新分析
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

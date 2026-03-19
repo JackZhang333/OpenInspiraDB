@@ -22,4 +22,8 @@ export class RoutedAiService {
   async embedText(text) {
     return this.zhipuService.embedText(text);
   }
+
+  async previewTagOrganization() {
+    return this.zhipuService.previewTagOrganization();
+  }
 }

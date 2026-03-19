@@ -11,6 +11,7 @@ const ERROR_MESSAGES = {
   SYSTEM_TAG_LOCKED: '系统标签不可修改',
   TAG_HAS_CHILDREN: '请先删除或移动该一级标签下的二级标签',
   TAG_IN_USE: '该标签仍被图片使用，暂时不能删除',
+  TARGET_TAG_NOT_FOUND: '目标标签不存在，整理方案已过期，请重新生成',
   EMPTY_EXPORT_SELECTION: '当前列表没有可导出的图片',
   EXPORT_PATH_REQUIRED: '导出路径不能为空',
   COPY_IMAGE_FAILED: '当前图片暂时无法复制，请改用导出后再粘贴',
@@ -162,6 +163,7 @@ export const useAppStore = create((set, get) => ({
   importProgress: null,
   detailLoading: false,
   saving: false,
+  reanalyzing: false,
   error: null,
   copiedImageId: null,
 
@@ -272,6 +274,7 @@ export const useAppStore = create((set, get) => ({
 
       const currentItems = page === 1 ? [] : get().result.items;
       const selectedTags = deriveSelectedTags(availableTags, selectedTagIds);
+      const normalizedSelectedTagIds = selectedTags.map((tag) => Number(tag.id));
       const nextExpandedParentTagIds = deriveExpandedParents(availableTags, expandedParentTagIds, selectedTagIds);
 
       set({
@@ -280,6 +283,7 @@ export const useAppStore = create((set, get) => ({
           items: [...currentItems, ...result.items],
         },
         availableTags,
+        selectedTagIds: normalizedSelectedTagIds,
         selectedTags,
         expandedParentTagIds: nextExpandedParentTagIds,
         loading: false,
@@ -446,6 +450,38 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  async getTagOrganizationStatus() {
+    try {
+      return await getBridge().getTagOrganizationStatus();
+    } catch (error) {
+      set({ error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async previewTagOrganization() {
+    try {
+      return await getBridge().previewTagOrganization();
+    } catch (error) {
+      set({ error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async applyTagOrganizationPlan(payload) {
+    set({ saving: true, error: null });
+    try {
+      const result = await getBridge().applyTagOrganizationPlan(payload);
+      await get().refreshSearch();
+      await get().reloadSelectedDetail();
+      set({ saving: false });
+      return result;
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
   async exportImage(imageId) {
     if (!imageId) {
       return { canceled: true };
@@ -520,14 +556,26 @@ export const useAppStore = create((set, get) => ({
       return;
     }
 
-    set({ saving: true, error: null });
+    set({ reanalyzing: true, error: null });
     try {
-      await getBridge().rebuildImageAnalysis(imageId);
+      const result = await getBridge().rebuildImageAnalysis(imageId);
+
+      if (result?.status === 'ready') {
+        set({ selectedImageId: null, detail: null });
+        await get().refreshSearch();
+        set({ reanalyzing: false });
+        return result;
+      }
+
       await get().refreshSearch();
       await get().reloadSelectedDetail();
-      set({ saving: false });
+      set({
+        reanalyzing: false,
+        error: result?.status === 'failed' ? '重新分析失败，请稍后重试' : null,
+      });
+      return result;
     } catch (error) {
-      set({ saving: false, error: getErrorMessage(error) });
+      set({ reanalyzing: false, error: getErrorMessage(error) });
     }
   },
 

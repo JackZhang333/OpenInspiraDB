@@ -21,6 +21,7 @@ export default function App() {
     importProgress,
     detailLoading,
     saving,
+    reanalyzing,
     error,
     copiedImageId,
     loading,
@@ -41,6 +42,9 @@ export default function App() {
     createTag,
     updateTag,
     deleteTag,
+    getTagOrganizationStatus,
+    previewTagOrganization,
+    applyTagOrganizationPlan,
     exportImage,
     exportCurrentResultBatch,
     copyImage,
@@ -167,6 +171,7 @@ export default function App() {
                   detail={detail}
                   loading={detailLoading}
                   saving={saving || importing}
+                  reanalyzing={reanalyzing}
                   copiedImageId={copiedImageId}
                   tagTree={availableTags}
                   onSaveMetadata={saveMetadata}
@@ -190,6 +195,9 @@ export default function App() {
         onCreateTag={createTag}
         onUpdateTag={updateTag}
         onDeleteTag={deleteTag}
+        onGetOrganizationStatus={getTagOrganizationStatus}
+        onPreviewOrganization={previewTagOrganization}
+        onApplyOrganizationPlan={applyTagOrganizationPlan}
       />
     </main>
   );
