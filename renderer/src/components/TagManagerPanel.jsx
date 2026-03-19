@@ -401,7 +401,7 @@ function AddParentCategoryForm({ onCreate, saving }) {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-clay/25 py-3 text-sm font-medium text-ink/50 transition-all hover:border-moss/30 hover:bg-moss/[0.02] hover:text-moss"
       >
         <Plus className="h-4 w-4" />
-        新增分类
+        一级类目
       </button>
     );
   }
@@ -422,9 +422,9 @@ function AddParentCategoryForm({ onCreate, saving }) {
             setName('');
           }
         }}
-        placeholder="输入新的一级分类名称，例如：项目类型"
+        placeholder="例如：项目类型"
         disabled={isLoading}
-        className="h-10 min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink/35 disabled:opacity-50"
+        className="h-10 w-48 border-0 bg-transparent text-sm outline-none placeholder:text-ink/35 disabled:opacity-50"
       />
       <button
         onClick={handleSubmit}
