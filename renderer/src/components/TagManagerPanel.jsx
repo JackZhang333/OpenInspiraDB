@@ -3,7 +3,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  Search,
   X,
   Check,
   FolderOpen,
@@ -60,25 +59,6 @@ function formatRelativeTime(dateString) {
   return date.toLocaleDateString('zh-CN');
 }
 
-// 高亮匹配文本
-function HighlightText({ text, query, className }) {
-  if (!query.trim()) return <span className={className}>{text}</span>;
-
-  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
-
-  return (
-    <span className={className}>
-      {parts.map((part, i) =>
-        part.toLowerCase() === query.toLowerCase() ? (
-          <span key={i} className="rounded bg-moss/20 px-0.5 font-medium text-moss">{part}</span>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
-    </span>
-  );
-}
-
 // 二级标签徽章组件
 function ChildTagBadge({
   tag,
@@ -90,7 +70,6 @@ function ChildTagBadge({
   onDelete,
   onEditingNameChange,
   saving,
-  searchQuery,
 }) {
   const isEditing = editingTagId === tag.id;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -135,11 +114,7 @@ function ChildTagBadge({
 
   return (
     <div className="group relative flex items-center gap-2 rounded-lg bg-clay/5 px-3 py-2 transition-colors hover:bg-clay/10">
-      <HighlightText
-        text={tag.name}
-        query={searchQuery}
-        className="text-sm text-ink/80"
-      />
+      <span className="text-sm text-ink/80">{tag.name}</span>
 
       {showDeleteConfirm ? (
         <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-1">
@@ -201,7 +176,6 @@ function ParentCategoryCard({
   onNewChildNameChange,
   onCreateChild,
   saving,
-  searchQuery,
 }) {
   const isEditing = editingTagId === group.id;
   const isAddingChild = addingChildToParentId === group.id;
@@ -281,9 +255,7 @@ function ParentCategoryCard({
             <IconComponent className={cn('h-5 w-5', iconConfig.color)} />
           </div>
           <div>
-            <h3 className="text-[15px] font-semibold text-ink">
-              <HighlightText text={group.name} query={searchQuery} />
-            </h3>
+            <h3 className="text-[15px] font-semibold text-ink">{group.name}</h3>
             <p className="text-xs text-ink/40">
               {group.children?.length || 0} 个二级标签 · 更新于 {formatRelativeTime(group.updatedAt)}
             </p>
@@ -350,7 +322,6 @@ function ParentCategoryCard({
             onDelete={onDelete}
             onEditingNameChange={onEditingNameChange}
             saving={saving}
-            searchQuery={searchQuery}
           />
         ))}
 
@@ -477,18 +448,7 @@ function AddParentCategoryForm({ onCreate, saving }) {
 }
 
 // 空状态组件
-function EmptyState({ searchQuery }) {
-  if (searchQuery) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-clay/25 py-16 text-center">
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-clay/8">
-          <Search className="h-5 w-5 text-ink/25" />
-        </div>
-        <p className="text-sm text-ink/50">未找到匹配的标签</p>
-      </div>
-    );
-  }
-
+function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-clay/25 py-16 text-center">
       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-clay/8">
@@ -514,21 +474,6 @@ export function TagManagerPanel({
   const [editingName, setEditingName] = useState('');
   const [addingChildToParentId, setAddingChildToParentId] = useState(null);
   const [newChildName, setNewChildName] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isCreatingParent, setIsCreatingParent] = useState(false);
-
-  // 过滤标签树
-  const filteredTagTree = useMemo(() => {
-    if (!searchQuery.trim()) return tagTree || [];
-    const query = searchQuery.toLowerCase();
-    return (tagTree || []).filter((group) => {
-      const matchParent = group.name.toLowerCase().includes(query);
-      const matchChildren = (group.children || []).some((child) =>
-        child.name.toLowerCase().includes(query)
-      );
-      return matchParent || matchChildren;
-    });
-  }, [tagTree, searchQuery]);
 
   // 创建一级分类
   const handleCreateParent = useCallback(
@@ -629,28 +574,6 @@ export function TagManagerPanel({
           </div>
         </div>
 
-        {/* 搜索框 */}
-        <div className="px-8 pb-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/30" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="筛选一级分类或二级标签..."
-              className="h-11 w-full rounded-xl border border-clay/15 bg-[#fafbfa] pl-11 pr-10 text-sm outline-none transition-all placeholder:text-ink/35 focus:border-moss/30 focus:bg-white focus:ring-4 focus:ring-moss/5"
-            />
-            {searchQuery ? (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-ink/30 hover:bg-clay/10 hover:text-ink/50"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-        </div>
-
         {/* 内容区 */}
         <div className="flex-1 space-y-3 overflow-auto px-8 pb-6">
           {/* 新增分类按钮 - 放在内容区顶部 */}
@@ -659,11 +582,11 @@ export function TagManagerPanel({
             saving={saving}
           />
 
-          {filteredTagTree.length === 0 ? (
-            <EmptyState searchQuery={searchQuery} />
+          {(tagTree || []).length === 0 ? (
+            <EmptyState />
           ) : (
             <div className="grid gap-3 pt-2">
-              {filteredTagTree.map((group, index) => (
+              {(tagTree || []).map((group, index) => (
                 <div key={group.id} className="group/card">
                   <ParentCategoryCard
                     group={group}
@@ -682,7 +605,6 @@ export function TagManagerPanel({
                     onNewChildNameChange={setNewChildName}
                     onCreateChild={handleCreateChild}
                     saving={saving}
-                    searchQuery={searchQuery}
                   />
                 </div>
               ))}
