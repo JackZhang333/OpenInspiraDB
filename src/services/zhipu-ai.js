@@ -2,16 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { nowIso } from '../core/database.js';
+import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { buildEmbeddingText, getEffectiveTagNames } from '../utils/embedding.js';
 import { uniqueNonEmptyTags } from '../utils/text.js';
 import { normalizeVector } from '../utils/vector.js';
-import { saveAiTags, upsertEmbedding } from './mock-ai.js';
-import { isManagedKeychainRef } from './keychain-store.js';
-
-const ZHIPU_API_BASE = 'https://open.bigmodel.cn/api/paas/v4';
-const DEFAULT_VISION_MODEL = 'glm-4v-plus';
-const DEFAULT_EMBEDDING_MODEL = 'embedding-3';
-const DEFAULT_EMBEDDING_DIMENSIONS = 256;
+import { saveAiTags, upsertEmbedding } from './ai-persistence.js';
 
 function toMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
@@ -97,30 +92,18 @@ export class ZhipuAiService {
   constructor(db, logger, options = {}) {
     this.db = db;
     this.logger = logger;
-    this.resolveApiKeyFromRef = options.resolveApiKeyFromRef;
+    this.modelConfig = options.modelConfig || defaultModelConfig;
   }
 
   getSettings() {
-    const settings = this.db.get('SELECT * FROM app_settings LIMIT 1');
-    const apiKeyRef = String(settings?.api_key_ref || '').trim();
-    let apiKey = '';
-
-    if (apiKeyRef) {
-      apiKey = isManagedKeychainRef(apiKeyRef)
-        ? String(this.resolveApiKeyFromRef?.(apiKeyRef) || '').trim()
-        : apiKeyRef;
-    }
-
-    if (!apiKey) {
-      apiKey = String(process.env.ZHIPU_API_KEY || '').trim();
-    }
+    const zhipuConfig = this.modelConfig?.zhipu || {};
 
     return {
-      apiBase: ZHIPU_API_BASE,
-      apiKey,
-      visionModel: DEFAULT_VISION_MODEL,
-      embeddingModel: DEFAULT_EMBEDDING_MODEL,
-      embeddingDimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+      apiBase: String(zhipuConfig.apiBase || '').trim(),
+      apiKey: String(zhipuConfig.apiKey || '').trim(),
+      visionModel: String(zhipuConfig.visionModel || '').trim(),
+      embeddingModel: String(zhipuConfig.embeddingModel || '').trim(),
+      embeddingDimensions: Number(zhipuConfig.embeddingDimensions),
     };
   }
 

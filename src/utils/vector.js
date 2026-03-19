@@ -43,7 +43,7 @@ function extractTextFeatures(text) {
   return Array.from(features);
 }
 
-export function embedTextMock(text, dimension = DEFAULT_VECTOR_DIMENSION) {
+export function embedTextDeterministic(text, dimension = DEFAULT_VECTOR_DIMENSION) {
   const normalized = String(text || '').toLowerCase().trim();
   const features = extractTextFeatures(normalized);
   const vector = new Array(dimension).fill(0);

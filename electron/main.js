@@ -12,7 +12,6 @@ const {
   dialog,
   ipcMain,
   nativeImage,
-  safeStorage,
 } = electron;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -121,19 +120,6 @@ function createInspiraApp() {
     dbPath: path.join(userDataPath, 'inspiradb.sqlite'),
     libraryRootPath: path.join(userDataPath, 'library'),
     thumbnailRootPath: path.join(userDataPath, 'thumbnails'),
-    secureStorePath: path.join(userDataPath, 'secure-store.json'),
-    secretEncryption: {
-      isEncryptionAvailable() {
-        return safeStorage.isEncryptionAvailable();
-      },
-      encryptString(value) {
-        return safeStorage.encryptString(value);
-      },
-      decryptString(buffer) {
-        return safeStorage.decryptString(buffer);
-      },
-    },
-    requireSecretEncryption: true,
     autoStartQueue: true,
   });
 }
@@ -277,13 +263,6 @@ function registerIpcHandlers() {
     return inspiraApp.getFilterTags(query);
   });
 
-  ipcMain.handle('inspiradb:get-settings', () => {
-    return inspiraApp.getAppSettings();
-  });
-
-  ipcMain.handle('inspiradb:update-settings', (_, payload = {}) => {
-    return inspiraApp.updateAppSettings(payload);
-  });
 }
 
 app.whenReady().then(() => {

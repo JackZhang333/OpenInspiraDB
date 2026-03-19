@@ -5,7 +5,6 @@ import { useAppStore } from './store/useAppStore.js';
 import { AppSidebar } from './components/AppSidebar.jsx';
 import { LibraryWorkspace } from './components/LibraryWorkspace.jsx';
 import { DetailPanel } from './components/DetailPanel.jsx';
-import { SettingsPanel } from './components/SettingsPanel.jsx';
 
 export default function App() {
   const {
@@ -15,7 +14,6 @@ export default function App() {
     availableTags,
     selectedImageId,
     detail,
-    settings,
     importing,
     importProgress,
     detailLoading,
@@ -40,11 +38,9 @@ export default function App() {
     copyImage,
     rebuildAnalysis,
     deleteSelected,
-    saveSettings,
     init,
   } = useAppStore();
 
-  const [showSettings, setShowSettings] = useState(false);
   const [queryDraft, setQueryDraft] = useState(query);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -74,11 +70,6 @@ export default function App() {
 
   const hasMore = result.items.length < result.total;
 
-  const handleSaveSettings = async (payload) => {
-    await saveSettings(payload);
-    setShowSettings(false);
-  };
-
   return (
     <main className="h-screen overflow-hidden bg-transparent">
       <div className={cn('relative grid h-full w-full gap-0 overflow-hidden transition-[grid-template-columns] duration-300', shellGridClass)}>
@@ -101,7 +92,6 @@ export default function App() {
               clearTag();
             }}
             onClearTag={clearTag}
-            onOpenSettings={() => setShowSettings(true)}
           />
         </div>
 
@@ -176,14 +166,6 @@ export default function App() {
             </div>
           </div>
         </aside>
-
-        <SettingsPanel
-          open={showSettings}
-          settings={settings}
-          saving={saving}
-          onSave={handleSaveSettings}
-          onClose={() => setShowSettings(false)}
-        />
       </div>
     </main>
   );

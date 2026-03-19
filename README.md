@@ -6,7 +6,7 @@
 - React + Vite 渲染层
 - SQLite 本地存储
 - 设计图导入、检索、详情编辑
-- Mock / Zhipu AI 分析
+- 智谱 AI 分析
 - DMG / Mac App Store 打包基础配置
 
 ## 开发运行
@@ -19,7 +19,8 @@ npm run electron:dev
 
 说明：
 - `npm run electron:dev` 会先构建渲染层，再启动 Electron
-- API Key 会通过 Electron `safeStorage` 加密后保存，本地数据库只保留引用
+- 智谱模型名与 API Key 统一由开发者在 `src/model-config.js` 中配置
+- 智谱 API Key 也可通过环境变量 `ZHIPU_API_KEY` 提供
 
 ## CLI 调试入口
 

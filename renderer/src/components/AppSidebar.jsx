@@ -3,7 +3,6 @@ import {
   FolderOpen,
   ImagePlus,
   Download,
-  Settings2,
   Tags,
   X,
   CheckCircle2,
@@ -153,7 +152,6 @@ export function AppSidebar({
   selectedTag,
   onSelectTag,
   onClearTag,
-  onOpenSettings,
 }) {
   const progress = getImportProgressSnapshot(importing, importProgress);
   const total = Number(importProgress?.total || 0);
@@ -428,14 +426,7 @@ export function AppSidebar({
 
       <div className={cn('border-t border-clay/20', collapsed ? 'p-2' : 'p-3')}>
         {!collapsed ? (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenSettings}
-              className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-ink/50 transition hover:bg-white/60 hover:text-ink/80"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              <span>设置</span>
-            </button>
+          <div className="flex items-center justify-end">
             <button
               onClick={onToggleCollapse}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-white/60 hover:text-ink/70"
@@ -446,13 +437,7 @@ export function AppSidebar({
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2">
-            <button
-              onClick={onOpenSettings}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-white/60 hover:text-ink/70"
-            >
-              <Settings2 className="h-4 w-4" />
-            </button>
+          <div className="flex flex-col items-center">
             <button
               onClick={onToggleCollapse}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-white/60 hover:text-ink/70"

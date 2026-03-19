@@ -91,16 +91,6 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_status ON analysis_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_image_id ON analysis_jobs(image_id);
-
-CREATE TABLE IF NOT EXISTS app_settings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  api_provider TEXT NOT NULL DEFAULT 'mock',
-  api_key_ref TEXT,
-  cloud_analysis_enabled INTEGER NOT NULL DEFAULT 0,
-  library_root_path TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 `;
 
 export function nowIso() {
@@ -144,32 +134,5 @@ export class InspiraDatabase {
       this.exec('ROLLBACK');
       throw error;
     }
-  }
-
-  ensureSettings(libraryRootPath) {
-    const settings = this.get('SELECT * FROM app_settings LIMIT 1');
-    if (settings) {
-      return settings;
-    }
-
-    const now = nowIso();
-    this.run(
-      `INSERT INTO app_settings (
-        api_provider,
-        cloud_analysis_enabled,
-        library_root_path,
-        created_at,
-        updated_at
-      ) VALUES (
-        'mock',
-        0,
-        :libraryRootPath,
-        :now,
-        :now
-      )`,
-      { libraryRootPath, now },
-    );
-
-    return this.get('SELECT * FROM app_settings LIMIT 1');
   }
 }

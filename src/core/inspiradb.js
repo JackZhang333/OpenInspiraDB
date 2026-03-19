@@ -28,9 +28,9 @@ import {
   writeXmpForImage,
 } from '../utils/xmp.js';
 import { createLogger } from '../utils/logger.js';
+import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { RoutedAiService } from '../services/ai-factory.js';
 import { AnalysisQueue } from '../services/analysis-queue.js';
-import { KeychainStore, isManagedKeychainRef } from '../services/keychain-store.js';
 
 function resolveExistingFilePath(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -357,10 +357,8 @@ export class InspiraDBApp {
     dbPath,
     libraryRootPath,
     thumbnailRootPath,
-    secureStorePath,
-    secretEncryption,
-    requireSecretEncryption = false,
     autoStartQueue = true,
+    modelConfig = defaultModelConfig,
   } = {}) {
     const defaults = defaultPaths(rootDir);
 
@@ -368,22 +366,16 @@ export class InspiraDBApp {
       dbPath: dbPath || defaults.dbPath,
       libraryRootPath: libraryRootPath || defaults.libraryRootPath,
       thumbnailRootPath: thumbnailRootPath || defaults.thumbnailRootPath,
-      secureStorePath: secureStorePath || path.join(path.dirname(dbPath || defaults.dbPath), 'secure-store.json'),
     };
 
     ensureDirectories([path.dirname(this.paths.dbPath), this.paths.libraryRootPath, this.paths.thumbnailRootPath]);
 
     this.logger = createLogger('inspiradb');
     this.db = new InspiraDatabase(this.paths.dbPath);
-    this.db.ensureSettings(this.paths.libraryRootPath);
-    this.keychainStore = new KeychainStore({
-      storePath: this.paths.secureStorePath,
-      encryption: secretEncryption,
-      requireEncryption: requireSecretEncryption,
-    });
+    this.modelConfig = modelConfig;
 
     this.aiService = new RoutedAiService(this.db, this.logger, {
-      resolveApiKeyFromRef: (ref) => this.resolveApiKeyFromRef(ref),
+      modelConfig: this.modelConfig,
     });
     this.queue = new AnalysisQueue({
       db: this.db,
@@ -399,14 +391,6 @@ export class InspiraDBApp {
   close() {
     this.queue.stop();
     this.db.close();
-  }
-
-  resolveApiKeyFromRef(ref) {
-    if (!ref) {
-      return '';
-    }
-
-    return this.keychainStore.getSecret(ref);
   }
 
   async importFolder(folderPath, options = {}) {
@@ -1585,124 +1569,4 @@ export class InspiraDBApp {
       });
   }
 
-  getAppSettings() {
-    const settings = this.db.ensureSettings(this.paths.libraryRootPath);
-    return {
-      provider: settings.api_provider || 'mock',
-      apiKey: this.resolveApiKeyFromRef(settings.api_key_ref || ''),
-      cloudAnalysisEnabled: Boolean(settings.cloud_analysis_enabled),
-      libraryRootPath: settings.library_root_path || this.paths.libraryRootPath,
-    };
-  }
-
-  async updateAppSettings(payload = {}) {
-    const current = this.db.ensureSettings(this.paths.libraryRootPath);
-    const now = nowIso();
-    const provider = String(payload.provider || current.api_provider || 'mock').trim() || 'mock';
-    const hasApiKeyInput = Object.prototype.hasOwnProperty.call(payload, 'apiKey');
-    let apiKeyRef = String(current.api_key_ref || '').trim();
-
-    if (hasApiKeyInput) {
-      const plainApiKey = String(payload.apiKey || '').trim();
-      if (plainApiKey) {
-        const reusableRef = isManagedKeychainRef(apiKeyRef) ? apiKeyRef : '';
-        apiKeyRef = this.keychainStore.upsertSecret({
-          ref: reusableRef,
-          secret: plainApiKey,
-        });
-      } else {
-        if (apiKeyRef) {
-          this.keychainStore.deleteSecret(apiKeyRef);
-        }
-        apiKeyRef = '';
-      }
-    }
-
-    const cloudAnalysisEnabled = payload.cloudAnalysisEnabled == null
-      ? Number(current.cloud_analysis_enabled || 0)
-      : payload.cloudAnalysisEnabled
-        ? 1
-        : 0;
-
-    this.db.run(
-      `UPDATE app_settings
-       SET api_provider = :provider,
-           api_key_ref = :apiKeyRef,
-           cloud_analysis_enabled = :cloudAnalysisEnabled,
-           updated_at = :updatedAt
-       WHERE id = :id`,
-      {
-        id: current.id,
-        provider,
-        apiKeyRef: apiKeyRef || null,
-        cloudAnalysisEnabled,
-        updatedAt: now,
-      },
-    );
-
-    const providerChanged = String(current.api_provider || '') !== provider;
-    const apiKeyChanged = String(current.api_key_ref || '') !== apiKeyRef;
-    if (providerChanged || apiKeyChanged) {
-      await this.resyncAllImagesForProviderChange(provider);
-    }
-
-    return this.getAppSettings();
-  }
-
-  async resyncAllImagesForProviderChange(provider) {
-    const rows = this.db.all(
-      `SELECT i.id, c.source AS caption_source, c.model_provider
-       FROM images i
-       LEFT JOIN captions c ON c.id = i.active_caption_id
-       WHERE i.active_caption_id IS NOT NULL`,
-    );
-
-    if (!rows.length) {
-      return { reanalyzeCount: 0, refreshEmbeddingCount: 0 };
-    }
-
-    let reanalyzeCount = 0;
-    let refreshEmbeddingCount = 0;
-
-    this.db.transaction(() => {
-      const now = nowIso();
-      for (const row of rows) {
-        const shouldReanalyze = row.caption_source === 'ai'
-          && String(row.model_provider || '').trim()
-          && String(row.model_provider || '').trim() !== provider;
-
-        this.createAnalysisJob(row.id, {
-          jobType: shouldReanalyze ? 'analyze_image' : 'refresh_embedding',
-          maxRetryCount: 2,
-          asTransaction: true,
-        });
-
-        this.db.run(
-          `UPDATE images
-           SET needs_embedding_refresh = 1,
-               analysis_status = CASE
-                 WHEN :shouldReanalyze = 1 THEN :queued
-                 ELSE analysis_status
-               END,
-               updated_at = :updatedAt
-           WHERE id = :imageId`,
-          {
-            imageId: row.id,
-            shouldReanalyze: shouldReanalyze ? 1 : 0,
-            queued: IMAGE_STATUS.QUEUED,
-            updatedAt: now,
-          },
-        );
-
-        if (shouldReanalyze) {
-          reanalyzeCount += 1;
-        } else {
-          refreshEmbeddingCount += 1;
-        }
-      }
-    });
-
-    await this.queue.drain();
-    return { reanalyzeCount, refreshEmbeddingCount };
-  }
 }

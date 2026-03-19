@@ -9,7 +9,7 @@ const ERROR_MESSAGES = {
   IMAGE_FILE_MISSING: '图片原文件不存在，可能已被移动或删除',
   DESKTOP_BRIDGE_OUTDATED: '客户端桥接未更新，请重启应用后再试',
   DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
-  ZHIPU_API_KEY_MISSING: '请先在设置中填写智谱 API Key，或配置 ZHIPU_API_KEY 环境变量',
+  ZHIPU_API_KEY_MISSING: '请先在 src/model-config.js 或 ZHIPU_API_KEY 环境变量中配置智谱 API Key',
   ZHIPU_API_REQUEST_FAILED: '智谱接口请求失败，请检查 API Key、网络或模型权限',
   ZHIPU_EMBEDDING_EMPTY: '智谱 embeddings 返回为空，请稍后重试',
 };
@@ -113,7 +113,6 @@ export const useAppStore = create((set, get) => ({
   availableTags: [],
   selectedImageId: null,
   detail: null,
-  settings: null,
   loading: false,
   importing: false,
   importProgress: null,
@@ -224,28 +223,7 @@ export const useAppStore = create((set, get) => ({
 
   async init() {
     get().ensureImportProgressListener();
-    await Promise.all([get().refreshSearch(), get().loadSettings()]);
-  },
-
-  async loadSettings() {
-    try {
-      const settings = await getBridge().getSettings();
-      set({ settings });
-    } catch (error) {
-      set({ error: getErrorMessage(error) });
-    }
-  },
-
-  async saveSettings(payload) {
-    set({ saving: true, error: null });
-    try {
-      const settings = await getBridge().updateSettings(payload);
-      set({ settings, saving: false });
-      return settings;
-    } catch (error) {
-      set({ saving: false, error: getErrorMessage(error) });
-      throw error;
-    }
+    await get().refreshSearch();
   },
 
   async importFolder() {

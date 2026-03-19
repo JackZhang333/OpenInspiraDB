@@ -54,10 +54,4 @@ contextBridge.exposeInMainWorld('inspira', {
   getFilterTags(query) {
     return ipcRenderer.invoke('inspiradb:filter-tags', query);
   },
-  getSettings() {
-    return ipcRenderer.invoke('inspiradb:get-settings');
-  },
-  updateSettings(payload) {
-    return ipcRenderer.invoke('inspiradb:update-settings', payload);
-  },
 });

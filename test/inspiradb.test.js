@@ -5,8 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { InspiraDBApp } from '../src/index.js';
+import { createModelConfig } from '../src/model-config.js';
 import { buildEmbeddingText } from '../src/utils/embedding.js';
-import { embedTextMock } from '../src/utils/vector.js';
+import { embedTextDeterministic } from '../src/utils/vector.js';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,9 +27,76 @@ async function waitForImageStatus(app, imageId, targetStatus, timeoutMs = 5000) 
   assert.fail(`Expected image ${imageId} to reach status ${targetStatus}, got ${image?.analysis_status}`);
 }
 
+async function waitForQueueIdle(app, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const activeJob = app.db.get(
+      `SELECT id
+       FROM analysis_jobs
+       WHERE status IN ('pending', 'processing', 'retrying')
+       LIMIT 1`,
+    );
+
+    if (!activeJob) {
+      return;
+    }
+
+    await sleep(25);
+  }
+
+  assert.fail('Expected analysis queue to become idle before shutdown');
+}
+
+function installStubbedZhipuService(app) {
+  app.aiService.zhipuService.request = async (endpoint, payload = {}) => {
+    if (endpoint === '/embeddings') {
+      return {
+        data: [
+          {
+            embedding: embedTextDeterministic(payload.input),
+          },
+        ],
+      };
+    }
+
+    if (endpoint === '/chat/completions') {
+      return {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                caption: '这是一张设计参考图，画面包含清晰主体、构图线索与可检索风格信息。',
+                tags: ['设计参考', '视觉灵感', '构图'],
+              }),
+            },
+          },
+        ],
+      };
+    }
+
+    throw new Error(`UNSUPPORTED_TEST_ENDPOINT:${endpoint}`);
+  };
+}
+
+function createTestApp(options = {}) {
+  const app = new InspiraDBApp(options);
+  installStubbedZhipuService(app);
+  return app;
+}
+
+function assertVectorsAlmostEqual(actual, expected, epsilon = 1e-12) {
+  assert.equal(actual.length, expected.length);
+  for (let index = 0; index < actual.length; index += 1) {
+    assert.ok(
+      Math.abs(actual[index] - expected[index]) <= epsilon,
+      `Vector mismatch at index ${index}: expected ${expected[index]}, got ${actual[index]}`,
+    );
+  }
+}
+
 test('import -> analyze -> search -> user override rules', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-test-'));
-  const app = new InspiraDBApp({ rootDir: root, autoStartQueue: true });
+  const app = createTestApp({ rootDir: root, autoStartQueue: true });
 
   try {
     const sourceDir = path.join(root, 'fixtures');
@@ -60,9 +128,9 @@ test('import -> analyze -> search -> user override rules', async () => {
     assert.equal(tagResult.activeTagSource, 'user');
 
     const embeddingAfterTagUpdate = app.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId });
-    assert.deepEqual(
+    assertVectorsAlmostEqual(
       JSON.parse(embeddingAfterTagUpdate.vector),
-      embedTextMock(buildEmbeddingText('这是人工修订的品牌海报参考描述', tagResult.tags)),
+      embedTextDeterministic(buildEmbeddingText('这是人工修订的品牌海报参考描述', tagResult.tags)),
     );
 
     await app.rebuildImageAnalysis(imageId);
@@ -74,45 +142,43 @@ test('import -> analyze -> search -> user override rules', async () => {
     assert.deepEqual(detailAfterReanalyze.effectiveTags.sort(), ['品牌', '极简', '海报'].sort());
 
     const embeddingAfterReanalyze = app.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId });
-    assert.deepEqual(
+    assertVectorsAlmostEqual(
       JSON.parse(embeddingAfterReanalyze.vector),
-      embedTextMock(buildEmbeddingText(detailAfterReanalyze.activeCaption.content, detailAfterReanalyze.effectiveTags)),
+      embedTextDeterministic(buildEmbeddingText(detailAfterReanalyze.activeCaption.content, detailAfterReanalyze.effectiveTags)),
     );
 
     const searchResult = await app.searchImages('品牌海报', ['品牌']);
     assert.ok(searchResult.total >= 1);
     assert.ok(searchResult.items.some((item) => item.id === imageId));
   } finally {
+    await waitForQueueIdle(app);
     app.close();
   }
 });
 
-test('managed api key refs are persisted in the local secure store fallback', async () => {
+test('developer model config drives the active provider and model settings', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-managed-key-test-'));
-  const app = new InspiraDBApp({ rootDir: root, autoStartQueue: false });
+  const app = createTestApp({
+    rootDir: root,
+    autoStartQueue: false,
+    modelConfig: createModelConfig({
+      zhipu: {
+        apiKey: 'dev-config-token',
+        visionModel: 'glm-test-vision',
+        embeddingModel: 'embed-test-v2',
+        embeddingDimensions: 512,
+      },
+    }),
+  });
 
   try {
-    const updated = await app.updateAppSettings({
-      provider: 'zhipu',
-      cloudAnalysisEnabled: true,
-      apiKey: 'managed-token-value',
+    assert.deepEqual(app.aiService.zhipuService.getSettings(), {
+      apiBase: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: 'dev-config-token',
+      visionModel: 'glm-test-vision',
+      embeddingModel: 'embed-test-v2',
+      embeddingDimensions: 512,
     });
-
-    assert.equal(updated.provider, 'zhipu');
-    assert.equal(updated.apiKey, 'managed-token-value');
-
-    const secureStorePath = path.join(root, 'data', 'secure-store.json');
-    assert.equal(fs.existsSync(secureStorePath), true);
-
-    const dbSettings = app.db.get('SELECT api_key_ref FROM app_settings LIMIT 1');
-    assert.match(String(dbSettings.api_key_ref || ''), /^keychain:\/\/inspiradb\//);
-    assert.equal(app.resolveApiKeyFromRef(dbSettings.api_key_ref), 'managed-token-value');
-
-    const afterClear = await app.updateAppSettings({
-      apiKey: '',
-    });
-
-    assert.equal(afterClear.apiKey, '');
   } finally {
     app.close();
   }
@@ -120,12 +186,12 @@ test('managed api key refs are persisted in the local secure store fallback', as
 
 test('searchImages keeps semantic similarity ahead of stronger text matches', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-search-text-rank-test-'));
-  const app = new InspiraDBApp({ rootDir: root, autoStartQueue: false });
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
 
   try {
     const now = new Date().toISOString();
     const query = '鸟儿';
-    const queryVector = embedTextMock(query);
+    const queryVector = embedTextDeterministic(query);
     const reversedVector = queryVector.map((value) => -value);
 
     const insertReadyImage = ({ fileName, hash, updatedAt, caption, tags }) => {
@@ -186,8 +252,8 @@ test('searchImages keeps semantic similarity ahead of stronger text matches', as
           :content,
           'ai',
           1,
-          'mock',
-          'mock-caption-v1',
+          'zhipu',
+          'glm-test-vision',
           :createdAt,
           :updatedAt
         )`,
@@ -260,8 +326,8 @@ test('searchImages keeps semantic similarity ahead of stronger text matches', as
         :imageId,
         :vector,
         :dimension,
-        'mock',
-        'mock-embed-v1',
+        'zhipu',
+        'embedding-3',
         :createdAt
       )`,
       {
@@ -284,8 +350,8 @@ test('searchImages keeps semantic similarity ahead of stronger text matches', as
         :imageId,
         :vector,
         :dimension,
-        'mock',
-        'mock-embed-v1',
+        'zhipu',
+        'embedding-3',
         :createdAt
       )`,
       {
@@ -310,7 +376,7 @@ test('searchImages keeps semantic similarity ahead of stronger text matches', as
 
 test('searchImages avoids single-character lexical false positives for infant queries', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-search-infant-query-test-'));
-  const app = new InspiraDBApp({ rootDir: root, autoStartQueue: false });
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
 
   try {
     const now = new Date().toISOString();
@@ -373,8 +439,8 @@ test('searchImages avoids single-character lexical false positives for infant qu
           :content,
           'ai',
           1,
-          'mock',
-          'mock-caption-v1',
+          'zhipu',
+          'glm-test-vision',
           :createdAt,
           :updatedAt
         )`,
@@ -428,8 +494,8 @@ test('searchImages avoids single-character lexical false positives for infant qu
           :imageId,
           :vector,
           :dimension,
-          'mock',
-          'mock-embed-v1',
+          'zhipu',
+          'embedding-3',
           :createdAt
         )`,
         {
@@ -448,7 +514,7 @@ test('searchImages avoids single-character lexical false positives for infant qu
       hash: 'search-infant-hit',
       caption: '新生儿安静地躺在柔软的针织毯子上。',
       tags: ['新生儿', '针织毯子'],
-      vector: embedTextMock('新生儿 针织毯子'),
+      vector: embedTextDeterministic('新生儿 针织毯子'),
     });
 
     const birdImageId = insertReadyImage({
@@ -456,7 +522,7 @@ test('searchImages avoids single-character lexical false positives for infant qu
       hash: 'search-infant-noise',
       caption: '一只鸟儿停在春日的树枝上。',
       tags: ['小鸟', '春日'],
-      vector: embedTextMock('春日 小鸟'),
+      vector: embedTextDeterministic('春日 小鸟'),
     });
 
     const result = await app.searchImages('婴儿', []);
@@ -472,11 +538,11 @@ test('searchImages avoids single-character lexical false positives for infant qu
 
 test('searchImages boosts cute-intent queries toward baby subjects over scenery', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-search-cute-intent-test-'));
-  const app = new InspiraDBApp({ rootDir: root, autoStartQueue: false });
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
 
   try {
     const now = new Date().toISOString();
-    const cuteQueryVector = embedTextMock('可爱的样子');
+    const cuteQueryVector = embedTextDeterministic('可爱的样子');
 
     const insertReadyImage = ({ fileName, hash, caption, tags, vector }) => {
       const imageResult = app.db.run(
@@ -536,8 +602,8 @@ test('searchImages boosts cute-intent queries toward baby subjects over scenery'
           :content,
           'ai',
           1,
-          'mock',
-          'mock-caption-v1',
+          'zhipu',
+          'glm-test-vision',
           :createdAt,
           :updatedAt
         )`,
@@ -591,8 +657,8 @@ test('searchImages boosts cute-intent queries toward baby subjects over scenery'
           :imageId,
           :vector,
           :dimension,
-          'mock',
-          'mock-embed-v1',
+          'zhipu',
+          'embedding-3',
           :createdAt
         )`,
         {
@@ -619,7 +685,7 @@ test('searchImages boosts cute-intent queries toward baby subjects over scenery'
       hash: 'search-cute-baby',
       caption: '新生儿裹在柔软针织毯子里安静入睡。',
       tags: ['新生儿', '睡觉', '针织毯子'],
-      vector: embedTextMock('新生儿 睡觉 针织毯子'),
+      vector: embedTextDeterministic('新生儿 睡觉 针织毯子'),
     });
 
     const result = await app.searchImages('可爱的样子', []);

@@ -57,6 +57,6 @@ export function buildThumbnailPath(thumbnailRootPath, md5Hash) {
 }
 
 export function createThumbnailPlaceholder(sourcePath, thumbnailPath) {
-  // V1-A mock: 占位缩略图，后续可替换为真实图像缩放处理。
+  // 当前使用占位缩略图，后续可替换为真实图像缩放处理。
   copyFile(sourcePath, thumbnailPath);
 }
