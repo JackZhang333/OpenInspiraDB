@@ -98,6 +98,28 @@ AI 功能说明：
 
 ---
 
+## Short Version (English) - For App Store Connect Field Limits
+
+```
+Test Account: No login required
+
+AI Feature Notice:
+- Uses third-party AI service (Zhipu AI) for image analysis
+- Images uploaded only during analysis, all data stored locally
+- No data uploaded to developer servers
+
+Testing Steps:
+1. Click "Import Folder" to import images
+2. Wait for AI analysis to complete (a few seconds)
+3. Enter text in search box for semantic search
+4. Click sidebar tags to filter
+5. Test export functionality
+
+Contact: hey@yituji.cn
+```
+
+---
+
 ## 常见问题预设回复
 
 ### 关于 AI 数据来源
@@ -177,6 +199,78 @@ AI 功能说明：
 | **联系邮箱** | hey@yituji.cn |
 | **支持网站** | https://yituji.cn |
 | **隐私政策** | https://yituji.cn/privacy |
+
+---
+
+## Common Questions (English)
+
+### About AI Data Sources
+
+**Question**: Please explain the AI model's data source and training data.
+
+**Response Template**:
+```
+We use AI services provided by Zhipu AI (https://open.bigmodel.cn), specifically the GLM-4V-Plus and embedding-3 models.
+
+According to Zhipu AI's privacy policy:
+- Uploaded images are only used for real-time analysis and are not retained
+- Analysis results (text descriptions and tags) are stored locally on the user's device after being returned
+- Zhipu AI does not use user data for model training
+
+Our application itself:
+- Does not train any AI models
+- Does not store user data on servers
+- All data is stored locally on the user's device
+```
+
+### About Data Privacy
+
+**Question**: How does the app handle user data?
+
+**Response Template**:
+```
+Our app adopts a "local-first" architecture:
+
+1. Image Data:
+   - Stored in ~/Library/Application Support/InspiraDB/ on the user's device
+   - Not uploaded to any servers
+
+2. AI Analysis:
+   - Images are temporarily uploaded to third-party AI services only during analysis
+   - Analysis results (text) are stored locally after being returned
+
+3. User Preferences:
+   - Stored in local SQLite database
+   - No personally identifiable information is collected
+
+Detailed privacy policy: [Privacy Policy URL]
+```
+
+### About App Functionality
+
+**Question**: What is the core value of this app?
+
+**Response Template**:
+```
+InspiraDB is more than just an image browser. Its core values are:
+
+1. AI-Powered Analysis:
+   - Automatically recognizes image content
+   - Generates descriptive text and relevant tags
+   - No manual organization required from users
+
+2. Semantic Search:
+   - Supports natural language search (e.g., "sunny beach")
+   - Based on AI understanding rather than simple tag matching
+   - Greatly improves image discovery efficiency
+
+3. Local Management:
+   - Protects user privacy
+   - No subscription required; one-time purchase for lifetime use
+   - Works offline
+
+Target users: Designers, photographers, creative professionals
+```
 
 ---
 
