@@ -695,7 +695,11 @@ export function TagSettingsDialog({
           </div>
 
           <div className="space-y-5">
-            {draftGroups.map((group) => (
+            {draftGroups
+              .filter((group) => !(group.name === '未分组' && group.children.length === 0))
+              .map((group) => {
+              const isUncategorized = group.name === '未分组';
+              return (
               <div key={group.id} className="rounded-[26px] border border-white/70 bg-white/85 p-6 shadow-sm">
                 <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
@@ -765,6 +769,7 @@ export function TagSettingsDialog({
                             <option key={optionGroup.id} value={optionGroup.id}>{optionGroup.name || '未命名分类'}</option>
                           ))}
                         </select>
+                        {!isUncategorized && (
                         <button
                           type="button"
                           onClick={() => handleRemoveChild(group.id, child.id)}
@@ -772,9 +777,11 @@ export function TagSettingsDialog({
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
+                    )}
                       </div>
                     ))}
 
+                    {!isUncategorized && (
                     <div className="flex items-center gap-2 rounded-full border border-dashed border-moss/25 bg-white/70 px-3 py-2">
                       <Plus className="h-3.5 w-3.5 text-moss" />
                       <input
@@ -800,10 +807,12 @@ export function TagSettingsDialog({
                         新增
                       </button>
                     </div>
+                    )}
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
