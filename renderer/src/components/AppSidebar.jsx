@@ -187,7 +187,6 @@ export function TagSettingsDialog({
   const initialTreeRef = React.useRef([]);
   const [draftGroups, setDraftGroups] = React.useState([]);
   const [newParentName, setNewParentName] = React.useState('');
-  const [filterKeyword, setFilterKeyword] = React.useState('');
   const [localError, setLocalError] = React.useState('');
 
   React.useEffect(() => {
@@ -195,7 +194,6 @@ export function TagSettingsDialog({
       initialTreeRef.current = [];
       setDraftGroups([]);
       setNewParentName('');
-      setFilterKeyword('');
       setLocalError('');
       return;
     }
@@ -204,7 +202,6 @@ export function TagSettingsDialog({
     initialTreeRef.current = cloneTagTreeToDraft(tagTree);
     setDraftGroups(nextDraft);
     setNewParentName('');
-    setFilterKeyword('');
     setLocalError('');
   }, [open]);
 
@@ -407,19 +404,6 @@ export function TagSettingsDialog({
     onClose?.();
   };
 
-  const keyword = filterKeyword.trim().toLowerCase();
-  const visibleGroups = draftGroups.filter((group) => {
-    if (!keyword) {
-      return true;
-    }
-
-    if (group.name.toLowerCase().includes(keyword)) {
-      return true;
-    }
-
-    return group.children.some((child) => child.name.toLowerCase().includes(keyword));
-  });
-
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/45 p-6 backdrop-blur-sm">
       <div className="flex max-h-[88vh] w-full max-w-[1080px] flex-col overflow-hidden rounded-[28px] border border-clay/15 bg-[#f7faf4] shadow-[0_28px_80px_rgba(16,24,20,0.22)]">
@@ -428,24 +412,13 @@ export function TagSettingsDialog({
             <div className="text-[24px] font-bold tracking-tight text-ink">标签管理台</div>
             <div className="mt-1 text-sm text-ink/45">在这里整理一级分类和二级标签，最后统一提交保存。</div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden min-w-[280px] items-center gap-2 rounded-2xl border border-clay/15 bg-[#f4f7ef] px-4 py-3 md:flex">
-              <Tags className="h-4 w-4 text-moss" />
-              <input
-                value={filterKeyword}
-                onChange={(event) => setFilterKeyword(event.target.value)}
-                placeholder="筛选一级分类或二级标签..."
-                className="w-full border-0 bg-transparent p-0 text-sm text-ink placeholder:text-ink/30 focus:outline-none"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full p-2 text-ink/40 transition hover:bg-clay/10 hover:text-ink/70"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-ink/40 transition hover:bg-clay/10 hover:text-ink/70"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
@@ -455,8 +428,8 @@ export function TagSettingsDialog({
               <Input
                 value={newParentName}
                 onChange={(event) => setNewParentName(event.target.value)}
-                placeholder="输入新的一级分类名称，例如：项目类型"
-                className="h-12 rounded-2xl border-white/80 bg-[#f6faf2]"
+                placeholder="例如：项目类型"
+                className="h-12 w-48 rounded-2xl border-white/80 bg-[#f6faf2]"
               />
               <Button
                 type="button"
@@ -464,13 +437,13 @@ export function TagSettingsDialog({
                 onClick={handleAddParent}
               >
                 <Plus className="mr-1.5 h-4 w-4" />
-                新增分类
+                一级标签
               </Button>
             </div>
           </div>
 
           <div className="space-y-5">
-            {visibleGroups.map((group) => (
+            {draftGroups.map((group) => (
               <div key={group.id} className="rounded-[26px] border border-white/70 bg-white/85 p-6 shadow-sm">
                 <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
@@ -497,7 +470,7 @@ export function TagSettingsDialog({
                         <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] text-ink/45">系统</span>
                       ) : null}
                     </div>
-                    <div className="text-xs text-ink/40">{group.children.length} 个二级标签</div>
+                    <div className="text-xs text-ink/40">{group.children.length} 个标签</div>
                   </div>
 
                   {!group.isSystem ? (
@@ -513,8 +486,7 @@ export function TagSettingsDialog({
                 </div>
 
                 <div className="rounded-[22px] bg-[#f4f8ef] p-4">
-                  <div className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-ink/35">Secondary Tags</div>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     {group.children.map((child) => (
                       <div
                         key={child.id}
@@ -535,7 +507,7 @@ export function TagSettingsDialog({
                         <select
                           value={String(group.id)}
                           onChange={(event) => handleMoveChild(group.id, child.id, event.target.value)}
-                          className="max-w-[108px] rounded-full border border-clay/15 bg-[#f6faf2] px-2 py-1 text-[11px] font-medium text-ink/60"
+                          className="max-w-[80px] rounded-full border border-clay/15 bg-[#f6faf2] px-2 py-1 text-[11px] font-medium text-ink/60 focus:outline-none focus:ring-1 focus:ring-moss/30"
                         >
                           {draftGroups.map((optionGroup) => (
                             <option key={optionGroup.id} value={optionGroup.id}>{optionGroup.name || '未命名分类'}</option>
@@ -551,7 +523,7 @@ export function TagSettingsDialog({
                       </div>
                     ))}
 
-                    <div className="inline-flex items-center gap-2 rounded-full border border-dashed border-moss/25 bg-white/70 px-3 py-2">
+                    <div className="flex items-center gap-2 rounded-full border border-dashed border-moss/25 bg-white/70 px-3 py-2">
                       <Plus className="h-3.5 w-3.5 text-moss" />
                       <input
                         value={group.pendingChildName}
@@ -565,13 +537,13 @@ export function TagSettingsDialog({
                             handleAddChild(group.id);
                           }
                         }}
-                        placeholder="添加二级标签"
-                        className="min-w-[110px] border-0 bg-transparent p-0 text-sm text-ink placeholder:text-ink/30 focus:outline-none"
+                        placeholder="添加标签"
+                        className="min-w-[80px] flex-1 border-0 bg-transparent p-0 text-sm text-ink placeholder:text-ink/35 focus:outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => handleAddChild(group.id)}
-                        className="rounded-full bg-moss px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-moss/90"
+                        className="rounded-full bg-moss px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-moss/90"
                       >
                         新增
                       </button>
