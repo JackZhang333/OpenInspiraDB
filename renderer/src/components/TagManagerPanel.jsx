@@ -105,7 +105,7 @@ function ChildTagBadge({
 
   if (isEditing) {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-[#f0f4ec] px-3 py-2 shadow-sm ring-1 ring-moss/20">
+      <div className="flex items-center gap-2 rounded-lg bg-moss/[0.06] px-3 py-2 ring-1 ring-moss/15">
         <input
           ref={inputRef}
           value={editingName}
@@ -119,15 +119,15 @@ function ChildTagBadge({
         <button
           onClick={() => onSaveEdit(tag)}
           disabled={saving || !editingName.trim()}
-          className="flex h-5 w-5 items-center justify-center rounded bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+          className="flex h-5 w-5 items-center justify-center rounded text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-50"
         >
-          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
         </button>
         <button
           onClick={onCancelEdit}
-          className="flex h-5 w-5 items-center justify-center rounded bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
+          className="flex h-5 w-5 items-center justify-center rounded text-ink/40 transition-colors hover:bg-rose-50 hover:text-rose-600"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
     );
@@ -233,10 +233,10 @@ function ParentCategoryCard({
   // 编辑一级标签名称
   if (isEditing) {
     return (
-      <div className="rounded-xl border border-clay/20 bg-white p-5 shadow-md">
+      <div className="rounded-2xl border border-moss/20 bg-white p-5 shadow-sm ring-1 ring-moss/10">
         <div className="flex items-center gap-3">
-          <div className={cn('flex h-12 w-12 items-center justify-center rounded-xl', iconConfig.bg)}>
-            <IconComponent className={cn('h-6 w-6', iconConfig.color)} />
+          <div className={cn('flex h-11 w-11 items-center justify-center rounded-xl', iconConfig.bg)}>
+            <IconComponent className={cn('h-5 w-5', iconConfig.color)} />
           </div>
           <div className="flex-1">
             <Input
@@ -248,7 +248,7 @@ function ParentCategoryCard({
                 if (e.key === 'Escape') onCancelEdit();
               }}
               disabled={saving || group.isSystem}
-              className="h-10 text-base font-semibold"
+              className="h-10 text-[15px] font-semibold"
               placeholder="分类名称"
             />
           </div>
@@ -273,18 +273,18 @@ function ParentCategoryCard({
   }
 
   return (
-    <div className="group/card rounded-xl border border-clay/20 bg-white p-5 shadow-sm transition-all hover:shadow-md">
+    <div className="group/card rounded-2xl border border-clay/15 bg-white p-5 transition-all hover:border-clay/25 hover:shadow-sm">
       {/* 头部：图标 + 名称 + 操作 */}
       <div className="mb-4 flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className={cn('flex h-12 w-12 items-center justify-center rounded-xl', iconConfig.bg)}>
-            <IconComponent className={cn('h-6 w-6', iconConfig.color)} />
+          <div className={cn('flex h-11 w-11 items-center justify-center rounded-xl', iconConfig.bg)}>
+            <IconComponent className={cn('h-5 w-5', iconConfig.color)} />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-ink">
+            <h3 className="text-[15px] font-semibold text-ink">
               <HighlightText text={group.name} query={searchQuery} />
             </h3>
-            <p className="text-xs text-ink/50">
+            <p className="text-xs text-ink/40">
               {group.children?.length || 0} 个二级标签 · 更新于 {formatRelativeTime(group.updatedAt)}
             </p>
           </div>
@@ -356,8 +356,7 @@ function ParentCategoryCard({
 
         {/* 添加二级标签 */}
         {isAddingChild ? (
-          <div className="flex items-center gap-2 rounded-lg bg-[#f0f4ec] px-3 py-2 shadow-sm ring-1 ring-moss/20">
-            <Tag className="h-4 w-4 text-moss/60" />
+          <div className="flex items-center gap-2 rounded-lg bg-moss/[0.06] px-3 py-2 ring-1 ring-moss/15">
             <input
               ref={childInputRef}
               value={newChildName}
@@ -366,30 +365,30 @@ function ParentCategoryCard({
                 if (e.key === 'Enter') onCreateChild(group.id);
                 if (e.key === 'Escape') onCancelAddChild();
               }}
-              placeholder="标签名称"
-              className="h-7 w-32 border-0 bg-transparent p-0 text-sm outline-none placeholder:text-ink/30"
+              placeholder="输入标签名称"
+              className="h-6 w-28 border-0 bg-transparent p-0 text-sm outline-none placeholder:text-ink/35"
             />
             <button
               onClick={() => onCreateChild(group.id)}
               disabled={saving || !newChildName.trim()}
-              className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+              className="flex h-5 w-5 items-center justify-center rounded text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-50"
             >
-              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
             </button>
             <button
               onClick={onCancelAddChild}
-              className="flex h-6 w-6 items-center justify-center rounded-md bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
+              className="flex h-5 w-5 items-center justify-center rounded text-ink/40 transition-colors hover:bg-rose-50 hover:text-rose-600"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         ) : (
           <button
             onClick={() => onStartAddChild(group.id)}
-            className="flex items-center gap-1.5 rounded-lg border border-clay/20 bg-white px-3 py-2 text-sm text-moss/80 transition-colors hover:border-moss/30 hover:bg-moss/5 hover:text-moss"
+            className="flex items-center gap-1 rounded-lg border border-dashed border-clay/25 px-3 py-2 text-sm text-ink/45 transition-all hover:border-moss/30 hover:bg-moss/[0.03] hover:text-moss"
           >
-            <Plus className="h-4 w-4" />
-            添加标签
+            <Plus className="h-3.5 w-3.5" />
+            新增标签
           </button>
         )}
       </div>
@@ -428,18 +427,18 @@ function AddParentCategoryForm({ onCreate, saving }) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 rounded-lg bg-moss px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-moss/90"
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-clay/25 py-3 text-sm font-medium text-ink/50 transition-all hover:border-moss/30 hover:bg-moss/[0.02] hover:text-moss"
       >
         <Plus className="h-4 w-4" />
-        添加一级分类
+        新增分类
       </button>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-moss/30 bg-moss/5 p-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-clay/10">
-        <FolderOpen className="h-5 w-5 text-ink/40" />
+    <div className="flex items-center gap-3 rounded-xl border border-moss/20 bg-moss/[0.03] p-3">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-moss/10">
+        <FolderOpen className="h-5 w-5 text-moss/60" />
       </div>
       <input
         ref={inputRef}
@@ -452,9 +451,9 @@ function AddParentCategoryForm({ onCreate, saving }) {
             setName('');
           }
         }}
-        placeholder="分类名称"
+        placeholder="输入新的一级分类名称，例如：项目类型"
         disabled={isLoading}
-        className="h-10 flex-1 border-0 bg-transparent text-base outline-none placeholder:text-ink/30 disabled:opacity-50"
+        className="h-10 min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink/35 disabled:opacity-50"
       />
       <button
         onClick={handleSubmit}
@@ -478,33 +477,24 @@ function AddParentCategoryForm({ onCreate, saving }) {
 }
 
 // 空状态组件
-function EmptyState({ searchQuery, onAddClick }) {
+function EmptyState({ searchQuery }) {
   if (searchQuery) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-clay/30 py-16 text-center">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
-          <Search className="h-7 w-7 text-ink/30" />
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-clay/25 py-16 text-center">
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-clay/8">
+          <Search className="h-5 w-5 text-ink/25" />
         </div>
-        <p className="mb-1 text-base font-medium text-ink/60">没有找到匹配的标签</p>
-        <p className="text-sm text-ink/40">尝试其他搜索词或创建新标签</p>
+        <p className="text-sm text-ink/50">未找到匹配的标签</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-clay/30 py-16 text-center">
-      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
-        <Tag className="h-7 w-7 text-ink/30" />
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-clay/25 py-16 text-center">
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-clay/8">
+        <Tag className="h-5 w-5 text-ink/25" />
       </div>
-      <p className="mb-1 text-base font-medium text-ink/60">还没有标签</p>
-      <p className="mb-4 text-sm text-ink/40">分类帮助你组织图片，比如按项目、客户或风格分组</p>
-      <button
-        onClick={onAddClick}
-        className="flex items-center gap-2 rounded-lg bg-moss px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-moss/90"
-      >
-        <Plus className="h-4 w-4" />
-        创建第一个分类
-      </button>
+      <p className="text-sm text-ink/50">点击上方按钮创建第一个分类</p>
     </div>
   );
 }
@@ -626,51 +616,53 @@ export function TagManagerPanel({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         {/* 头部 */}
-        <div className="flex items-center justify-between border-b border-clay/10 px-6 py-5">
+        <div className="flex items-start justify-between px-8 pt-8 pb-6">
           <div>
-            <h2 className="text-xl font-semibold text-ink">标签管理</h2>
-            <p className="text-sm text-ink/50">配置层级标签结构，管理图片分类</p>
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-2xl font-semibold text-ink">标签管理台</h2>
+              <span className="text-xs font-medium text-ink/30 tracking-wider">PRIMARY CATEGORY</span>
+            </div>
+            <p className="mt-1 text-sm text-ink/50">在这里整理一级分类和二级标签，最后统一提交保存。</p>
           </div>
-          <AddParentCategoryForm
-            onCreate={handleCreateParent}
-            saving={saving}
-          />
         </div>
 
         {/* 搜索框 */}
-        <div className="border-b border-clay/10 px-6 py-4">
+        <div className="px-8 pb-4">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/30" />
+            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/30" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索分类或标签..."
-              className="h-10 w-full rounded-lg border border-clay/20 bg-white pl-9 pr-4 text-sm outline-none transition-colors focus:border-moss/50 focus:ring-2 focus:ring-moss/10"
+              placeholder="筛选一级分类或二级标签..."
+              className="h-11 w-full rounded-xl border border-clay/15 bg-[#fafbfa] pl-11 pr-10 text-sm outline-none transition-all placeholder:text-ink/35 focus:border-moss/30 focus:bg-white focus:ring-4 focus:ring-moss/5"
             />
-            {searchQuery && (
+            {searchQuery ? (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/30 hover:text-ink/50"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-ink/30 hover:bg-clay/10 hover:text-ink/50"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 
         {/* 内容区 */}
-        <div className="flex-1 space-y-4 overflow-auto bg-[#fbfdf8] p-6">
+        <div className="flex-1 space-y-3 overflow-auto px-8 pb-6">
+          {/* 新增分类按钮 - 放在内容区顶部 */}
+          <AddParentCategoryForm
+            onCreate={handleCreateParent}
+            saving={saving}
+          />
+
           {filteredTagTree.length === 0 ? (
-            <EmptyState
-              searchQuery={searchQuery}
-              onAddClick={() => setIsCreatingParent(true)}
-            />
+            <EmptyState searchQuery={searchQuery} />
           ) : (
-            <div className="grid gap-4">
+            <div className="grid gap-3 pt-2">
               {filteredTagTree.map((group, index) => (
                 <div key={group.id} className="group/card">
                   <ParentCategoryCard
@@ -699,21 +691,21 @@ export function TagManagerPanel({
         </div>
 
         {/* 底部 */}
-        <div className="flex items-center justify-between border-t border-clay/10 bg-white px-6 py-4">
-          <div className="flex items-center gap-2 text-xs text-ink/50">
-            <AlertCircle className="h-4 w-4" />
+        <div className="flex items-center justify-between px-8 pb-8 pt-2">
+          <div className="flex items-center gap-2 text-xs text-ink/40">
+            <AlertCircle className="h-3.5 w-3.5" />
             <span>系统标签无法编辑或删除</span>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="rounded-lg px-5 py-2 text-sm font-medium text-ink/70 transition-colors hover:bg-clay/10 hover:text-ink"
+              className="rounded-lg px-5 py-2 text-sm font-medium text-ink/60 transition-colors hover:bg-clay/5 hover:text-ink"
             >
               取消
             </button>
             <button
               onClick={onClose}
-              className="rounded-lg bg-ink px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-ink/90"
+              className="rounded-lg bg-ink px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-ink/90"
             >
               完成
             </button>
