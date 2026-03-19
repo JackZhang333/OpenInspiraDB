@@ -344,26 +344,27 @@ class AnalysisQueue {
 ### 5.4 前端组件 (renderer/src/components/)
 
 #### TagManagerPanel (TagManagerPanel.jsx)
-标签管理面板，支持二级嵌套标签的增删改查。
-```javascript
-<TagManagerPanel
-  open={boolean}        // 是否显示
-  saving={boolean}      // 保存中状态
-  tagTree={array}       // 标签树数据
-  onClose={function}    // 关闭回调
-  onCreateTag={fn}      // 创建标签 (name, level, parentId)
-  onUpdateTag={fn}      // 更新标签 (tagId, name, parentId)
-  onDeleteTag={fn}      // 删除标签 (tagId)
-/>
-```
+标签管理面板，参考现代化设计，支持二级嵌套标签管理。
 
-**功能特性：**
-- 一级/二级标签分层展示（卡片式布局）
+**布局结构：**
+- 头部：标题 + 描述 + "添加一级分类"按钮
+- 搜索框：支持实时过滤标签
+- 卡片网格：每个一级分类独立卡片
+- 底部：信息提示 + 取消/完成按钮
+
+**卡片内容：**
+- 左侧图标：自动分配不同颜色图标
+- 分类名称 + 统计信息（二级标签数 + 更新时间）
+- 二级标签网格展示
+- 内嵌"+ 添加标签"按钮
+
+**交互特性：**
 - 内联编辑（点击编辑直接修改）
-- 添加二级标签后自动展开父标签
+- 图标自动分配（基于索引循环使用）
+- 相对时间显示（如"2小时前"）
+- 搜索实时过滤
 - 删除前确认（显示关联图片数）
 - 系统标签保护（不可编辑删除）
-- 一键展开/折叠所有
 
 ### 5.5 前端状态管理 (renderer/src/store/useAppStore.js)
 
