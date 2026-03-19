@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
+import { MAX_IMAGE_COUNT } from '../src/core/config.js';
 
 const {
   app,
@@ -25,6 +26,20 @@ function createAppError(code) {
   const error = new Error(code);
   error.code = code;
   return error;
+}
+
+function isImageLimitReachedError(error) {
+  return error?.code === 'IMAGE_LIMIT_REACHED' || error?.message === 'IMAGE_LIMIT_REACHED';
+}
+
+async function showImageLimitReachedDialog() {
+  await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['知道了'],
+    defaultId: 0,
+    title: '提示',
+    message: `已达到产品性能极限 ${Math.trunc(MAX_IMAGE_COUNT / 10_000)} 万张，有扩容需求请联系开发者`,
+  });
 }
 
 function emitImportProgress(payload = {}) {
@@ -135,6 +150,11 @@ function registerIpcHandlers() {
       return { canceled: true };
     }
 
+    if (inspiraApp.getImageCount() >= MAX_IMAGE_COUNT) {
+      await showImageLimitReachedDialog();
+      return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
+    }
+
     try {
       return await inspiraApp.importFolder(result.filePaths[0], {
         onProgress(progress) {
@@ -142,6 +162,12 @@ function registerIpcHandlers() {
         },
       });
     } catch (error) {
+      if (isImageLimitReachedError(error)) {
+        emitImportProgress({ mode: 'folder', phase: 'error', message: 'IMAGE_LIMIT_REACHED' });
+        await showImageLimitReachedDialog();
+        return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
+      }
+
       emitImportProgress({ mode: 'folder', phase: 'error', message: String(error?.message || error) });
       throw error;
     }
@@ -156,6 +182,11 @@ function registerIpcHandlers() {
 
     if (result.canceled || !result.filePaths.length) {
       return { canceled: true };
+    }
+
+    if (inspiraApp.getImageCount() >= MAX_IMAGE_COUNT) {
+      await showImageLimitReachedDialog();
+      return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
     }
 
     emitImportProgress({ mode: 'single', phase: 'started', current: 0, total: 1 });
@@ -184,6 +215,12 @@ function registerIpcHandlers() {
       emitImportProgress({ mode: 'single', phase: 'completed', current: 1, total: 1, status: importResult?.status });
       return importResult;
     } catch (error) {
+      if (isImageLimitReachedError(error)) {
+        emitImportProgress({ mode: 'single', phase: 'error', current: 1, total: 1, message: 'IMAGE_LIMIT_REACHED' });
+        await showImageLimitReachedDialog();
+        return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
+      }
+
       emitImportProgress({ mode: 'single', phase: 'error', current: 1, total: 1, message: String(error?.message || error) });
       throw error;
     }

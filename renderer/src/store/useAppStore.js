@@ -7,6 +7,7 @@ const ERROR_MESSAGES = {
   EXPORT_PATH_REQUIRED: '导出路径不能为空',
   COPY_IMAGE_FAILED: '当前图片暂时无法复制，请改用导出后再粘贴',
   IMAGE_FILE_MISSING: '图片原文件不存在，可能已被移动或删除',
+  IMAGE_LIMIT_REACHED: '已达到产品性能极限 5 万张，有扩容需求请联系开发者',
   DESKTOP_BRIDGE_OUTDATED: '客户端桥接未更新，请重启应用后再试',
   DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
   ZHIPU_API_KEY_MISSING: '请先在 src/model-config.js 或 ZHIPU_API_KEY 环境变量中配置智谱 API Key',

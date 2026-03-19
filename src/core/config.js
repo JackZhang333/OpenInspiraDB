@@ -2,6 +2,7 @@ import path from 'node:path';
 
 export const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic']);
 export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+export const MAX_IMAGE_COUNT = 50_000;
 
 export const IMAGE_STATUS = {
   IMPORTED: 'imported',

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   defaultPaths,
   MAX_FILE_SIZE_BYTES,
+  MAX_IMAGE_COUNT,
   SEARCH_PAGE_SIZE,
   IMAGE_STATUS,
   JOB_STATUS,
@@ -393,6 +394,24 @@ export class InspiraDBApp {
     this.db.close();
   }
 
+  getImageCount() {
+    const row = this.db.get('SELECT COUNT(*) AS total FROM images');
+    return Number(row?.total || 0);
+  }
+
+  ensureImportCapacity() {
+    const total = this.getImageCount();
+    if (total < MAX_IMAGE_COUNT) {
+      return;
+    }
+
+    const error = new Error('IMAGE_LIMIT_REACHED');
+    error.code = 'IMAGE_LIMIT_REACHED';
+    error.limit = MAX_IMAGE_COUNT;
+    error.currentCount = total;
+    throw error;
+  }
+
   async importFolder(folderPath, options = {}) {
     const reportProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
     const emitProgress = (payload) => {
@@ -605,6 +624,8 @@ export class InspiraDBApp {
         imageId: existed.id,
       };
     }
+
+    this.ensureImportCapacity();
 
     const fileName = path.basename(resolved.filePath);
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
