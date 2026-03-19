@@ -19,6 +19,7 @@ import {
   Globe,
   Layers,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 import { Button } from './ui/button.jsx';
@@ -59,13 +60,135 @@ function formatRelativeTime(dateString) {
   return date.toLocaleDateString('zh-CN');
 }
 
+// 高亮匹配文本
+function HighlightText({ text, query, className }) {
+  if (!query.trim()) return <span className={className}>{text}</span>;
+
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+
+  return (
+    <span className={className}>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <span key={i} className="rounded bg-moss/20 px-0.5 font-medium text-moss">{part}</span>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </span>
+  );
+}
+
+// 二级标签徽章组件
+function ChildTagBadge({
+  tag,
+  editingTagId,
+  editingName,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+  onEditingNameChange,
+  saving,
+  searchQuery,
+}) {
+  const isEditing = editingTagId === tag.id;
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-[#f0f4ec] px-3 py-2 shadow-sm ring-1 ring-moss/20">
+        <input
+          ref={inputRef}
+          value={editingName}
+          onChange={(e) => onEditingNameChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onSaveEdit(tag);
+            if (e.key === 'Escape') onCancelEdit();
+          }}
+          className="h-6 w-24 border-0 bg-transparent p-0 text-sm outline-none"
+        />
+        <button
+          onClick={() => onSaveEdit(tag)}
+          disabled={saving || !editingName.trim()}
+          className="flex h-5 w-5 items-center justify-center rounded bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+        </button>
+        <button
+          onClick={onCancelEdit}
+          className="flex h-5 w-5 items-center justify-center rounded bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative flex items-center gap-2 rounded-lg bg-clay/5 px-3 py-2 transition-colors hover:bg-clay/10">
+      <HighlightText
+        text={tag.name}
+        query={searchQuery}
+        className="text-sm text-ink/80"
+      />
+
+      {showDeleteConfirm ? (
+        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-1">
+          <button
+            onClick={() => {
+              onDelete(tag.id);
+              setShowDeleteConfirm(false);
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
+            title="确认删除"
+          >
+            <Check className="h-3 w-3" />
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(false)}
+            className="flex h-5 w-5 items-center justify-center rounded bg-clay/10 text-ink/50 transition-colors hover:bg-clay/20"
+            title="取消"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={() => onStartEdit(tag)}
+            className="flex h-5 w-5 items-center justify-center rounded text-ink/40 hover:bg-white hover:text-ink/70"
+            title="编辑"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex h-5 w-5 items-center justify-center rounded text-ink/40 hover:bg-rose-50 hover:text-rose-600"
+            title="删除"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 一级分类卡片组件
 function ParentCategoryCard({
   group,
   index,
   editingTagId,
   editingName,
-  editingParentId,
   addingChildToParentId,
   newChildName,
   onStartEdit,
@@ -77,15 +200,22 @@ function ParentCategoryCard({
   onCancelAddChild,
   onNewChildNameChange,
   onCreateChild,
-  tagTree,
   saving,
+  searchQuery,
 }) {
   const isEditing = editingTagId === group.id;
   const isAddingChild = addingChildToParentId === group.id;
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const inputRef = useRef(null);
   const childInputRef = useRef(null);
   const iconConfig = getTagIcon(index);
   const IconComponent = iconConfig.icon;
+
+  // 二级标签按字母排序
+  const sortedChildren = useMemo(() => {
+    const children = group.children || [];
+    return [...children].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  }, [group.children]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -103,7 +233,7 @@ function ParentCategoryCard({
   // 编辑一级标签名称
   if (isEditing) {
     return (
-      <div className="rounded-xl border-2 border-moss/30 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-clay/20 bg-white p-5 shadow-md">
         <div className="flex items-center gap-3">
           <div className={cn('flex h-12 w-12 items-center justify-center rounded-xl', iconConfig.bg)}>
             <IconComponent className={cn('h-6 w-6', iconConfig.color)} />
@@ -128,7 +258,7 @@ function ParentCategoryCard({
               disabled={saving || !editingName.trim()}
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
             >
-              <Check className="h-4 w-4" />
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
             </button>
             <button
               onClick={onCancelEdit}
@@ -143,7 +273,7 @@ function ParentCategoryCard({
   }
 
   return (
-    <div className="rounded-xl border border-clay/20 bg-white p-5 transition-shadow hover:shadow-md">
+    <div className="group/card rounded-xl border border-clay/20 bg-white p-5 shadow-sm transition-all hover:shadow-md">
       {/* 头部：图标 + 名称 + 操作 */}
       <div className="mb-4 flex items-start justify-between">
         <div className="flex items-center gap-3">
@@ -151,36 +281,64 @@ function ParentCategoryCard({
             <IconComponent className={cn('h-6 w-6', iconConfig.color)} />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-ink">{group.name}</h3>
+            <h3 className="text-base font-semibold text-ink">
+              <HighlightText text={group.name} query={searchQuery} />
+            </h3>
             <p className="text-xs text-ink/50">
               {group.children?.length || 0} 个二级标签 · 更新于 {formatRelativeTime(group.updatedAt)}
             </p>
           </div>
         </div>
         {!group.isSystem && (
-          <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/card:opacity-100">
-            <button
-              onClick={() => onStartEdit(group)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition-colors hover:bg-clay/10 hover:text-ink/70"
-              title="编辑"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => onDelete(group.id)}
-              disabled={(group.children?.length || 0) > 0}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30"
-              title={(group.children?.length || 0) > 0 ? '请先删除子标签' : '删除'}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+          <div className="flex items-center gap-1">
+            {showDeleteConfirm ? (
+              <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-1">
+                <span className="mr-1 text-xs text-rose-600">确认删除?</span>
+                <button
+                  onClick={() => {
+                    onDelete(group.id);
+                    setShowDeleteConfirm(false);
+                  }}
+                  disabled={(group.children?.length || 0) > 0}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-30"
+                  title={(group.children?.length || 0) > 0 ? '请先删除子标签' : '确认删除'}
+                >
+                  <Check className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-clay/10 text-ink/50 transition-colors hover:bg-clay/20"
+                  title="取消"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => onStartEdit(group)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition-colors hover:bg-clay/10 hover:text-ink/70"
+                  title="编辑"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={(group.children?.length || 0) > 0}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30"
+                  title={(group.children?.length || 0) > 0 ? '请先删除子标签' : '删除'}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
 
       {/* 二级标签网格 */}
       <div className="flex flex-wrap gap-2">
-        {group.children?.map((tag) => (
+        {sortedChildren.map((tag) => (
           <ChildTagBadge
             key={tag.id}
             tag={tag}
@@ -192,12 +350,13 @@ function ParentCategoryCard({
             onDelete={onDelete}
             onEditingNameChange={onEditingNameChange}
             saving={saving}
+            searchQuery={searchQuery}
           />
         ))}
 
         {/* 添加二级标签 */}
         {isAddingChild ? (
-          <div className="flex items-center gap-2 rounded-lg border-2 border-moss/30 bg-moss/5 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-lg bg-[#f0f4ec] px-3 py-2 shadow-sm ring-1 ring-moss/20">
             <Tag className="h-4 w-4 text-moss/60" />
             <input
               ref={childInputRef}
@@ -215,7 +374,7 @@ function ParentCategoryCard({
               disabled={saving || !newChildName.trim()}
               className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
             >
-              <Check className="h-3 w-3" />
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
             </button>
             <button
               onClick={onCancelAddChild}
@@ -227,7 +386,7 @@ function ParentCategoryCard({
         ) : (
           <button
             onClick={() => onStartAddChild(group.id)}
-            className="flex items-center gap-1.5 rounded-lg border border-dashed border-clay/30 px-3 py-2 text-sm text-moss transition-colors hover:border-moss/30 hover:bg-moss/5"
+            className="flex items-center gap-1.5 rounded-lg border border-clay/20 bg-white px-3 py-2 text-sm text-moss/80 transition-colors hover:border-moss/30 hover:bg-moss/5 hover:text-moss"
           >
             <Plus className="h-4 w-4" />
             添加标签
@@ -238,83 +397,11 @@ function ParentCategoryCard({
   );
 }
 
-// 二级标签徽章组件
-function ChildTagBadge({
-  tag,
-  editingTagId,
-  editingName,
-  onStartEdit,
-  onSaveEdit,
-  onCancelEdit,
-  onDelete,
-  onEditingNameChange,
-  saving,
-}) {
-  const isEditing = editingTagId === tag.id;
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
-
-  if (isEditing) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg border-2 border-moss/30 bg-moss/5 px-3 py-2">
-        <input
-          ref={inputRef}
-          value={editingName}
-          onChange={(e) => onEditingNameChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onSaveEdit(tag);
-            if (e.key === 'Escape') onCancelEdit();
-          }}
-          className="h-6 w-24 border-0 bg-transparent p-0 text-sm outline-none"
-        />
-        <button
-          onClick={() => onSaveEdit(tag)}
-          disabled={saving || !editingName.trim()}
-          className="flex h-5 w-5 items-center justify-center rounded bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
-        >
-          <Check className="h-3 w-3" />
-        </button>
-        <button
-          onClick={onCancelEdit}
-          className="flex h-5 w-5 items-center justify-center rounded bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="group relative flex items-center gap-2 rounded-lg bg-clay/5 px-3 py-2 transition-colors hover:bg-clay/10">
-      <span className="text-sm text-ink/80">{tag.name}</span>
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <button
-          onClick={() => onStartEdit(tag)}
-          className="flex h-5 w-5 items-center justify-center rounded text-ink/40 hover:bg-white hover:text-ink/70"
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-        <button
-          onClick={() => onDelete(tag.id)}
-          className="flex h-5 w-5 items-center justify-center rounded text-ink/40 hover:bg-rose-50 hover:text-rose-600"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // 添加一级分类表单
 function AddParentCategoryForm({ onCreate, saving }) {
   const [name, setName] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -326,9 +413,15 @@ function AddParentCategoryForm({ onCreate, saving }) {
   const handleSubmit = useCallback(async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await onCreate(trimmed);
-    setName('');
-    setIsOpen(false);
+
+    setIsLoading(true);
+    try {
+      await onCreate(trimmed);
+      setName('');
+      setIsOpen(false);
+    } finally {
+      setIsLoading(false);
+    }
   }, [name, onCreate]);
 
   if (!isOpen) {
@@ -344,7 +437,7 @@ function AddParentCategoryForm({ onCreate, saving }) {
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border-2 border-moss/30 bg-moss/5 p-3">
+    <div className="flex items-center gap-2 rounded-xl border border-moss/30 bg-moss/5 p-3">
       <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-clay/10">
         <FolderOpen className="h-5 w-5 text-ink/40" />
       </div>
@@ -360,23 +453,57 @@ function AddParentCategoryForm({ onCreate, saving }) {
           }
         }}
         placeholder="分类名称"
-        className="h-10 flex-1 border-0 bg-transparent text-base outline-none placeholder:text-ink/30"
+        disabled={isLoading}
+        className="h-10 flex-1 border-0 bg-transparent text-base outline-none placeholder:text-ink/30 disabled:opacity-50"
       />
       <button
         onClick={handleSubmit}
-        disabled={saving || !name.trim()}
+        disabled={isLoading || saving || !name.trim()}
         className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50"
       >
-        <Check className="h-4 w-4" />
+        {isLoading || saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
       </button>
       <button
         onClick={() => {
           setIsOpen(false);
           setName('');
         }}
-        className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100"
+        disabled={isLoading}
+        className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100 disabled:opacity-50"
       >
         <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+// 空状态组件
+function EmptyState({ searchQuery, onAddClick }) {
+  if (searchQuery) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-clay/30 py-16 text-center">
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
+          <Search className="h-7 w-7 text-ink/30" />
+        </div>
+        <p className="mb-1 text-base font-medium text-ink/60">没有找到匹配的标签</p>
+        <p className="text-sm text-ink/40">尝试其他搜索词或创建新标签</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-clay/30 py-16 text-center">
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
+        <Tag className="h-7 w-7 text-ink/30" />
+      </div>
+      <p className="mb-1 text-base font-medium text-ink/60">还没有标签</p>
+      <p className="mb-4 text-sm text-ink/40">分类帮助你组织图片，比如按项目、客户或风格分组</p>
+      <button
+        onClick={onAddClick}
+        className="flex items-center gap-2 rounded-lg bg-moss px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-moss/90"
+      >
+        <Plus className="h-4 w-4" />
+        创建第一个分类
       </button>
     </div>
   );
@@ -398,6 +525,7 @@ export function TagManagerPanel({
   const [addingChildToParentId, setAddingChildToParentId] = useState(null);
   const [newChildName, setNewChildName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCreatingParent, setIsCreatingParent] = useState(false);
 
   // 过滤标签树
   const filteredTagTree = useMemo(() => {
@@ -462,7 +590,7 @@ export function TagManagerPanel({
     [editingName, onUpdateTag, handleCancelEdit]
   );
 
-  // 删除标签
+  // 删除标签 - 使用内联确认替代 alert
   const handleDelete = useCallback(
     async (tagId) => {
       const tag = (tagTree || [])
@@ -474,18 +602,11 @@ export function TagManagerPanel({
       const hasChildren = isParent && (tag.children?.length || 0) > 0;
 
       if (hasChildren) {
-        alert('请先删除该分类下的所有二级标签');
+        // 显示提示但不阻断（由 UI 展示）
         return;
       }
 
-      const confirmed = window.confirm(
-        `确定要删除"${tag.name}"吗？${
-          tag.count > 0 ? `该标签关联了 ${tag.count} 张图片。` : ''
-        }`
-      );
-      if (confirmed) {
-        await onDeleteTag?.(tagId);
-      }
+      await onDeleteTag?.(tagId);
     },
     [tagTree, onDeleteTag]
   );
@@ -513,7 +634,10 @@ export function TagManagerPanel({
             <h2 className="text-xl font-semibold text-ink">标签管理</h2>
             <p className="text-sm text-ink/50">配置层级标签结构，管理图片分类</p>
           </div>
-          <AddParentCategoryForm onCreate={handleCreateParent} saving={saving} />
+          <AddParentCategoryForm
+            onCreate={handleCreateParent}
+            saving={saving}
+          />
         </div>
 
         {/* 搜索框 */}
@@ -527,23 +651,24 @@ export function TagManagerPanel({
               placeholder="搜索分类或标签..."
               className="h-10 w-full rounded-lg border border-clay/20 bg-white pl-9 pr-4 text-sm outline-none transition-colors focus:border-moss/50 focus:ring-2 focus:ring-moss/10"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/30 hover:text-ink/50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* 内容区 */}
         <div className="flex-1 space-y-4 overflow-auto bg-[#fbfdf8] p-6">
           {filteredTagTree.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-clay/30 py-16 text-center">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
-                <Tag className="h-7 w-7 text-ink/30" />
-              </div>
-              <p className="mb-1 text-base font-medium text-ink/60">
-                {searchQuery ? '没有找到匹配的标签' : '还没有标签'}
-              </p>
-              <p className="text-sm text-ink/40">
-                {searchQuery ? '尝试其他搜索词' : '点击右上角添加第一个分类'}
-              </p>
-            </div>
+            <EmptyState
+              searchQuery={searchQuery}
+              onAddClick={() => setIsCreatingParent(true)}
+            />
           ) : (
             <div className="grid gap-4">
               {filteredTagTree.map((group, index) => (
@@ -553,7 +678,6 @@ export function TagManagerPanel({
                     index={index}
                     editingTagId={editingTagId}
                     editingName={editingName}
-                    editingParentId={null}
                     addingChildToParentId={addingChildToParentId}
                     newChildName={newChildName}
                     onStartEdit={handleStartEdit}
@@ -565,8 +689,8 @@ export function TagManagerPanel({
                     onCancelAddChild={handleCancelAddChild}
                     onNewChildNameChange={setNewChildName}
                     onCreateChild={handleCreateChild}
-                    tagTree={tagTree}
                     saving={saving}
+                    searchQuery={searchQuery}
                   />
                 </div>
               ))}
