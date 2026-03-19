@@ -7,11 +7,10 @@
 **InspiraDB** 是一款面向独立设计师的桌面端灵感素材管理应用，基于 Electron + React 构建，专为 macOS 平台设计。
 
 ### 1.1 核心功能
-- 📁 本地图片素材库管理
+- 📁 本地图片素材库管理（最多 5 万张图片）
 - 🤖 AI 自动分析图片内容（标签、描述）
 - 🔍 语义搜索 + 标签筛选
 - 📤 批量导入/导出
-- 🔐 API Key 安全存储
 
 ### 1.2 项目基本信息
 | 属性 | 值 |
@@ -68,7 +67,6 @@
 | `node:sqlite` | Node.js 内置 | SQLite 数据库 (DatabaseSync) |
 | `node:fs` | Node.js 内置 | 文件系统操作 |
 | `node:crypto` | Node.js 内置 | UUID 生成 |
-| `electron safeStorage` | Electron API | 系统级加密存储 |
 
 ---
 
@@ -126,13 +124,13 @@
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │                  InspiraDBApp                                  │  │
 │  │  ┌───────────────┐  ┌──────────────┐  ┌───────────────┐       │  │
-│  │  │  InspiraDB    │  │ RoutedAi     │  │ AnalysisQueue │       │  │
+│  │  │  InspiraDB    │  │   ZhipuAI    │  │ AnalysisQueue │       │  │
 │  │  │  (Database)   │  │   Service    │  │  (任务队列)    │       │  │
 │  │  └───────────────┘  └──────────────┘  └───────────────┘       │  │
 │  │                                                              │  │
 │  │  ┌───────────────┐  ┌──────────────┐  ┌───────────────┐       │  │
-│  │  │   Keychain    │  │    Files     │  │    Vector     │       │  │
-│  │  │    Store      │  │   Utils      │  │    Utils      │       │  │
+│  │  │  AI Persist   │  │    Files     │  │    Vector     │       │  │
+│  │  │  (持久化层)    │  │   Utils      │  │    Utils      │       │  │
 │  │  └───────────────┘  └──────────────┘  └───────────────┘       │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
@@ -140,11 +138,11 @@
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         数据存储层 (Storage)                          │
-│  ┌────────────────────┐  ┌──────────────────┐  ┌────────────────┐   │
-│  │   SQLite DB        │  │   File System    │  │  Secure Store  │   │
-│  │  (userData/*.sqlite)│  │ (library/,       │  │ (API Key 加密)  │   │
-│  │                    │  │  thumbnails/)    │  │                │   │
-│  └────────────────────┘  └──────────────────┘  └────────────────┘   │
+│  ┌────────────────────┐  ┌──────────────────┐                        │
+│  │   SQLite DB        │  │   File System    │                        │
+│  │  (data/*.sqlite)   │  │ (library/,       │                        │
+│  │                    │  │  thumbnails/)    │                        │
+│  └────────────────────┘  └──────────────────┘                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -229,8 +227,6 @@ CREATE TABLE analysis_jobs (
 -- 应用设置
 CREATE TABLE app_settings (
   id INTEGER PRIMARY KEY,
-  api_provider TEXT DEFAULT 'mock',
-  api_key_ref TEXT,
   cloud_analysis_enabled INTEGER DEFAULT 0,
   created_at TEXT,
   updated_at TEXT
@@ -258,7 +254,6 @@ CREATE TABLE app_settings (
 | Update Handler | 更新元数据 | `inspiradb:update-caption/tags` |
 | Reanalyze Handler | 重新 AI 分析 | `inspiradb:reanalyze` |
 | Delete Handler | 删除图片 | `inspiradb:delete` |
-| Settings Handler | 获取/更新设置 | `inspiradb:get/update-settings` |
 
 ### 5.2 核心应用类 (src/core/inspiradb.js)
 
@@ -275,19 +270,35 @@ CREATE TABLE app_settings (
 | `copyImageToClipboard(imageId)` | 复制图片到系统剪贴板 |
 | `deleteImage(imageId)` | 删除图片及相关数据 |
 | `rebuildAnalysis(imageId)` | 重新触发 AI 分析 |
-| `getSettings()` / `updateSettings()` | 应用设置管理 |
+| `getImageCount()` | 获取当前图片总数 |
+| `ensureImportCapacity()` | 检查导入容量限制 |
 | `waitForImportedImagesSettled()` | 等待导入图片分析完成 |
 
 ### 5.3 AI 服务 (src/services/)
 
+#### 模型配置 (src/model-config.js)
+集中管理 AI 模型配置，开发者在此配置 API Key 和模型参数，而非 UI 暴露。
+```javascript
+function createModelConfig(overrides) {
+  return {
+    zhipu: {
+      apiBase,           // API 基础地址
+      apiKey,            // 从环境变量或硬编码
+      visionModel,       // 视觉模型名称
+      embeddingModel,    // 嵌入模型名称
+      embeddingDimensions // 向量维度
+    }
+  };
+}
+```
+
 #### AI Factory (ai-factory.js)
+简化后的 AI 服务入口，直接委托给智谱 AI。
 ```javascript
 class RoutedAiService {
-  getProvider()      // 获取当前 AI 提供商 (mock/zhipu)
-  getActiveService() // 获取当前激活的服务实例
-  analyzeImage(id)   // 分析图片，生成标签和描述
+  analyzeImage(id)     // 分析图片，生成标签和描述
   refreshEmbedding(id) // 刷新向量嵌入
-  embedText(text)    // 文本向量化
+  embedText(text)      // 文本向量化
 }
 ```
 
@@ -319,7 +330,6 @@ class AnalysisQueue {
 | `copyImage()` | 复制到剪贴板 |
 | `rebuildAnalysis()` | 重新分析 |
 | `deleteSelected()` | 删除选中图片 |
-| `saveSettings()` | 保存应用设置 |
 
 ---
 
@@ -403,34 +413,30 @@ flowchart TD
     D -->|是| E[获取待处理任务]
 
     E --> F[更新任务状态为 processing]
-    F --> G{AI 提供商?}
+    F --> G[调用智谱 AI API]
 
-    G -->|mock| H[返回模拟数据]
-    G -->|zhipu| I[调用智谱 AI API]
+    G --> H[发送图片分析请求]
+    H --> I[接收标签和描述]
+    J[发送文本嵌入请求]
+    K[接收向量嵌入]
 
-    I --> J[发送图片分析请求]
-    J --> K[接收标签和描述]
-    L[发送文本嵌入请求]
-    M[接收向量嵌入]
+    I --> L[写入 captions 表]
+    I --> M[写入 tags 表]
+    I --> N[写入 image_tags 关联]
+    K --> O[写入 embeddings 表]
 
-    K --> N[写入 captions 表]
-    K --> O[写入 tags 表]
-    K --> P[写入 image_tags 关联]
-    M --> Q[写入 embeddings 表]
+    L --> P[更新图片状态为 ready]
+    M --> P
+    N --> P
+    O --> P
 
-    N --> R[更新图片状态为 ready]
-    O --> R
-    P --> R
-    Q --> R
-    H --> R
+    P --> Q[标记任务为 succeeded]
 
-    R --> S[标记任务为 succeeded]
-
-    J -->|失败| T[捕获错误]
-    L -->|失败| T
-    T --> U{重试次数 < 最大?}
-    U -->|是| V[延迟后重新排队]
-    U -->|否| W[标记任务为 failed]
+    H -->|失败| R[捕获错误]
+    J -->|失败| R
+    R --> S{重试次数 < 最大?}
+    S -->|是| T[延迟后重新排队]
+    S -->|否| U[标记任务为 failed]
 ```
 
 ---
@@ -465,14 +471,6 @@ sequenceDiagram
     Queue->>Queue: 启动定时扫描
 
     Renderer->>Renderer: useEffect(init)
-    Renderer->>Preload: inspira.getSettings()
-    Preload->>Main: IPC: get-settings
-    Main->>Core: getSettings()
-    Core->>DB: 查询 app_settings
-    DB-->>Core: 返回设置
-    Core-->>Main: 返回设置
-    Main-->>Preload: 返回设置
-    Preload-->>Renderer: 返回设置
 
     Renderer->>Preload: inspira.search()
     Preload->>Main: IPC: search
@@ -605,47 +603,6 @@ sequenceDiagram
     Store->>UI: 打开详情面板显示
 ```
 
-### 7.4 设置更新时序
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as SettingsPanel
-    participant Store as useAppStore
-    participant Preload as Preload Script
-    participant Main as Electron Main
-    participant Core as InspiraDBApp
-    participant DB as SQLite
-    participant Keychain as KeychainStore
-
-    User->>UI: 打开设置面板
-    UI->>Store: init() 时已加载 settings
-    Store->>UI: 显示当前设置
-
-    User->>UI: 输入智谱 API Key
-    User->>UI: 选择提供商 "zhipu"
-    User->>UI: 点击保存
-
-    UI->>Store: saveSettings({apiProvider, apiKey})
-    Store->>Preload: inspira.updateSettings(payload)
-    Preload->>Main: IPC: update-settings
-    Main->>Core: updateSettings(changes)
-
-    Core->>Keychain: setApiKey(apiKey)
-    Keychain->>Keychain: safeStorage.encryptString()
-    Keychain->>Keychain: 写入 secure-store.json
-
-    Core->>DB: UPDATE app_settings
-    DB-->>Core: 更新成功
-
-    Core->>Core: 重新初始化 AI Service
-    Core-->>Main: 返回新设置
-    Main-->>Preload: 返回结果
-    Preload-->>Store: 返回结果
-    Store->>UI: 关闭设置面板
-    Store->>UI: 显示保存成功
-```
-
 ---
 
 ## 8. 项目结构
@@ -680,7 +637,6 @@ littlePin_Mac/
 │           ├── LibraryWorkspace.jsx
 │           ├── DetailPanel.jsx
 │           ├── GalleryCard.jsx
-│           ├── SettingsPanel.jsx
 │           └── ui/          # 基础 UI 组件
 ├── scripts/                  # 构建脚本
 │   ├── build-mac-icon.mjs
@@ -697,10 +653,10 @@ littlePin_Mac/
 │   │   └── inspiradb.js     # 主应用类
 │   ├── services/            # 服务层
 │   │   ├── ai-factory.js    # AI 服务工厂
+│   │   ├── ai-persistence.js # AI 持久化层
 │   │   ├── analysis-queue.js # 分析队列
-│   │   ├── keychain-store.js # 安全存储
-│   │   ├── mock-ai.js       # Mock AI
 │   │   └── zhipu-ai.js      # 智谱 AI
+│   ├── model-config.js      # AI 模型配置
 │   └── utils/               # 工具函数
 │       ├── embedding.js     # 向量嵌入
 │       ├── files.js         # 文件操作
@@ -733,9 +689,13 @@ littlePin_Mac/
 - TypeScript 支持友好
 
 ### 9.3 为什么采用 AI Factory 模式?
-- 支持多 AI 提供商切换
-- Mock 服务便于开发和测试
 - 统一接口，业务层无感知
+- 便于未来扩展多 AI 提供商
+
+### 9.4 为什么采用集中式模型配置?
+- 避免在 UI 暴露敏感配置
+- 开发者统一配置，用户无感知
+- 简化应用架构，减少设置面板
 
 ### 9.4 为什么需要 Analysis Queue?
 - AI API 调用有速率限制
@@ -749,7 +709,6 @@ littlePin_Mac/
 
 | 方面 | 措施 |
 |------|------|
-| API Key 存储 | 使用 Electron safeStorage 加密 |
 | 数据库 | 本地 SQLite，不对外暴露 |
 | IPC 通信 | 通过 preload 脚本严格控制暴露 API |
 | 文件系统 | 仅在用户选择目录后操作 |
