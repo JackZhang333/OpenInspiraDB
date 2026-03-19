@@ -1,4 +1,5 @@
 import { uniqueNonEmptyTags } from './text.js';
+import { listEffectiveTagNames } from '../core/tag-store.js';
 
 export function buildEmbeddingText(caption, tags = []) {
   const cleanCaption = String(caption || '').trim();
@@ -16,21 +17,7 @@ export function buildEmbeddingText(caption, tags = []) {
 }
 
 export function getEffectiveTagNames(db, imageId) {
-  const rows = db.all(
-    `SELECT t.name
-     FROM image_tags it
-     JOIN tags t ON t.id = it.tag_id
-     JOIN images i ON i.id = it.image_id
-     WHERE it.image_id = :imageId
-       AND it.source = CASE
-         WHEN i.active_tag_source = 'user' THEN 'user'
-         ELSE 'ai'
-       END
-     ORDER BY t.name ASC`,
-    { imageId },
-  );
-
-  return rows.map((row) => row.name);
+  return listEffectiveTagNames(db, imageId);
 }
 
 export function getExistingTagCandidates(db, limit = 200) {

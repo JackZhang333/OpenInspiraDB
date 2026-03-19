@@ -2,16 +2,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { cn } from './lib/utils.js';
 import { useAppStore } from './store/useAppStore.js';
-import { AppSidebar } from './components/AppSidebar.jsx';
+import { AppSidebar, TagSettingsDialog } from './components/AppSidebar.jsx';
 import { LibraryWorkspace } from './components/LibraryWorkspace.jsx';
 import { DetailPanel } from './components/DetailPanel.jsx';
 
 export default function App() {
   const {
     query,
-    selectedTag,
+    selectedTagIds,
+    selectedTags,
     result,
     availableTags,
+    expandedParentTagIds,
+    tagFilterMode,
     selectedImageId,
     detail,
     importing,
@@ -27,12 +30,17 @@ export default function App() {
     runSearch,
     refreshSearch,
     loadMore,
-    selectTag,
-    clearTag,
+    toggleTagSelection,
+    clearTags,
+    toggleParentExpanded,
+    setFilterMode,
     importFolder,
     importFile,
     selectImage,
     saveMetadata,
+    createTag,
+    updateTag,
+    deleteTag,
     exportImage,
     exportCurrentResultBatch,
     copyImage,
@@ -43,6 +51,7 @@ export default function App() {
 
   const [queryDraft, setQueryDraft] = useState(query);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [tagSettingsOpen, setTagSettingsOpen] = useState(false);
 
   useEffect(() => {
     init();
@@ -54,7 +63,7 @@ export default function App() {
 
   const detailDrawerOpen = Boolean(selectedImageId);
   const shellGridClass = useMemo(() => (
-    sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[232px_minmax(0,1fr)]'
+    sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[320px_minmax(0,1fr)]'
   ), [sidebarCollapsed]);
 
   const handleSubmitSearch = () => {
@@ -79,19 +88,20 @@ export default function App() {
             onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
             importing={importing}
             importProgress={importProgress}
+            saving={saving}
             onImportFolder={importFolder}
             onImportFile={importFile}
             onExportBatch={exportCurrentResultBatch}
             availableTags={availableTags}
-            selectedTag={selectedTag}
-            onSelectTag={(tagName) => {
-              if (tagName) {
-                selectTag(tagName);
-                return;
-              }
-              clearTag();
-            }}
-            onClearTag={clearTag}
+            expandedParentTagIds={expandedParentTagIds}
+            selectedTagIds={selectedTagIds}
+            selectedTags={selectedTags}
+            filterMode={tagFilterMode}
+            onToggleParent={toggleParentExpanded}
+            onToggleTag={toggleTagSelection}
+            onClearTags={clearTags}
+            onFilterModeChange={setFilterMode}
+            onOpenTagSettings={() => setTagSettingsOpen(true)}
           />
         </div>
 
@@ -108,8 +118,10 @@ export default function App() {
               onQueryDraftChange={setQueryDraft}
               onSubmitSearch={handleSubmitSearch}
               onRefresh={refreshSearch}
-              selectedTag={selectedTag}
-              onClearTag={clearTag}
+              selectedTags={selectedTags}
+              filterMode={tagFilterMode}
+              onToggleTag={toggleTagSelection}
+              onClearTags={clearTags}
               result={result}
               selectedImageId={selectedImageId}
               onSelectImage={selectImage}
@@ -131,7 +143,7 @@ export default function App() {
 
           <div
             className={cn(
-              'pointer-events-auto absolute inset-y-0 right-0 h-full w-[min(420px,calc(100vw-24px))] border-l border-clay/10 bg-off-white shadow-2xl transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] md:w-[420px]',
+              'pointer-events-auto absolute inset-y-0 right-0 h-full w-[min(460px,calc(100vw-24px))] border-l border-clay/10 bg-off-white shadow-2xl transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] md:w-[460px]',
               detailDrawerOpen ? 'translate-x-0' : 'translate-x-full',
             )}
           >
@@ -156,7 +168,9 @@ export default function App() {
                   loading={detailLoading}
                   saving={saving || importing}
                   copiedImageId={copiedImageId}
+                  tagTree={availableTags}
                   onSaveMetadata={saveMetadata}
+                  onCreateTag={createTag}
                   onCopy={copyImage}
                   onExport={exportImage}
                   onReanalyze={rebuildAnalysis}
@@ -167,6 +181,16 @@ export default function App() {
           </div>
         </aside>
       </div>
+
+      <TagSettingsDialog
+        open={tagSettingsOpen}
+        saving={saving}
+        tagTree={availableTags}
+        onClose={() => setTagSettingsOpen(false)}
+        onCreateTag={createTag}
+        onUpdateTag={updateTag}
+        onDeleteTag={deleteTag}
+      />
     </main>
   );
 }

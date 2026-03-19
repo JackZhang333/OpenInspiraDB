@@ -2,7 +2,15 @@ import { create } from 'zustand';
 
 const ERROR_MESSAGES = {
   EMPTY_CAPTION: '描述不能为空',
+  EMPTY_TAG_NAME: '标签名称不能为空',
   IMAGE_NOT_FOUND: '图片不存在，可能已被删除',
+  TAG_NOT_FOUND: '标签不存在或已被删除',
+  TAG_LEVEL_INVALID: '只能选择二级标签',
+  TAG_ALREADY_EXISTS: '标签名称已存在',
+  PARENT_TAG_NOT_FOUND: '父标签不存在',
+  SYSTEM_TAG_LOCKED: '系统标签不可修改',
+  TAG_HAS_CHILDREN: '请先删除或移动该一级标签下的二级标签',
+  TAG_IN_USE: '该标签仍被图片使用，暂时不能删除',
   EMPTY_EXPORT_SELECTION: '当前列表没有可导出的图片',
   EXPORT_PATH_REQUIRED: '导出路径不能为空',
   COPY_IMAGE_FAILED: '当前图片暂时无法复制，请改用导出后再粘贴',
@@ -81,6 +89,38 @@ function getErrorMessage(error) {
   return '请求失败';
 }
 
+function normalizeMode(mode) {
+  return String(mode || '').trim().toLowerCase() === 'or' ? 'or' : 'and';
+}
+
+function flattenChildTags(tagTree = []) {
+  return tagTree.flatMap((group) => group.children || []);
+}
+
+function deriveSelectedTags(tagTree, selectedTagIds) {
+  const selectedSet = new Set((selectedTagIds || []).map((id) => Number(id)));
+  return flattenChildTags(tagTree).filter((tag) => selectedSet.has(Number(tag.id)));
+}
+
+function deriveExpandedParents(tagTree, currentExpandedIds = [], selectedTagIds = []) {
+  const next = new Set((currentExpandedIds || []).map((id) => Number(id)));
+  const selectedSet = new Set((selectedTagIds || []).map((id) => Number(id)));
+
+  for (const group of tagTree || []) {
+    if ((group.children || []).some((tag) => selectedSet.has(Number(tag.id)))) {
+      next.add(Number(group.id));
+    }
+  }
+
+  if (!next.size) {
+    for (const group of (tagTree || []).slice(0, 4)) {
+      next.add(Number(group.id));
+    }
+  }
+
+  return Array.from(next);
+}
+
 let importProgressUnsubscribe = null;
 let importAutoRefreshInFlight = false;
 let copyFeedbackTimeout = null;
@@ -107,7 +147,10 @@ function normalizeImportProgress(payload = {}) {
 
 export const useAppStore = create((set, get) => ({
   query: '',
-  selectedTag: null,
+  selectedTagIds: [],
+  selectedTags: [],
+  expandedParentTagIds: [],
+  tagFilterMode: 'and',
   page: 1,
   pageSize: 50,
   result: { total: 0, items: [] },
@@ -163,13 +206,41 @@ export const useAppStore = create((set, get) => ({
     return get().refreshSearch();
   },
 
-  async selectTag(tagName) {
-    set({ selectedTag: tagName, page: 1 });
+  async toggleTagSelection(tagId) {
+    const normalizedTagId = Number(tagId);
+    const selectedTagIds = get().selectedTagIds || [];
+    const nextTagIds = selectedTagIds.includes(normalizedTagId)
+      ? selectedTagIds.filter((id) => id !== normalizedTagId)
+      : [...selectedTagIds, normalizedTagId];
+
+    set({ selectedTagIds: nextTagIds, page: 1 });
     return get().refreshSearch();
   },
 
-  async clearTag() {
-    set({ selectedTag: null, page: 1 });
+  async clearTags() {
+    set({ selectedTagIds: [], selectedTags: [], page: 1 });
+    return get().refreshSearch();
+  },
+
+  toggleParentExpanded(parentTagId) {
+    const normalizedParentId = Number(parentTagId);
+    set((state) => ({
+      expandedParentTagIds: state.expandedParentTagIds.includes(normalizedParentId)
+        ? state.expandedParentTagIds.filter((id) => id !== normalizedParentId)
+        : [...state.expandedParentTagIds, normalizedParentId],
+    }));
+  },
+
+  async setFilterMode(mode) {
+    const nextMode = normalizeMode(mode);
+    set({ tagFilterMode: nextMode, page: 1 });
+
+    try {
+      await getBridge().setTagFilterMode(nextMode);
+    } catch (error) {
+      set({ error: getErrorMessage(error) });
+    }
+
     return get().refreshSearch();
   },
 
@@ -181,29 +252,42 @@ export const useAppStore = create((set, get) => ({
   },
 
   async refreshSearch() {
-    const { query, selectedTag, page, pageSize, selectedImageId } = get();
+    const {
+      query,
+      selectedTagIds,
+      tagFilterMode,
+      page,
+      pageSize,
+      selectedImageId,
+      expandedParentTagIds,
+    } = get();
     set({ loading: true, error: null });
 
     try {
-      const selectedTags = selectedTag ? [selectedTag] : [];
       const bridge = getBridge();
       const [result, availableTags] = await Promise.all([
-        bridge.search({ query, selectedTags, page, pageSize }),
-        bridge.getFilterTags(query),
+        bridge.search({ query, selectedTagIds, filterMode: tagFilterMode, page, pageSize }),
+        bridge.getFilterTags({ query, selectedTagIds, filterMode: tagFilterMode }),
       ]);
 
       const currentItems = page === 1 ? [] : get().result.items;
+      const selectedTags = deriveSelectedTags(availableTags, selectedTagIds);
+      const nextExpandedParentTagIds = deriveExpandedParents(availableTags, expandedParentTagIds, selectedTagIds);
+
       set({
         result: {
           ...result,
           items: [...currentItems, ...result.items],
         },
         availableTags,
+        selectedTags,
+        expandedParentTagIds: nextExpandedParentTagIds,
         loading: false,
       });
 
       if (selectedImageId) {
-        const stillExists = result.items.some((item) => item.id === selectedImageId);
+        const stillExists = result.items.some((item) => item.id === selectedImageId)
+          || currentItems.some((item) => item.id === selectedImageId);
         if (!stillExists) {
           set({ selectedImageId: null, detail: null });
         }
@@ -224,6 +308,14 @@ export const useAppStore = create((set, get) => ({
 
   async init() {
     get().ensureImportProgressListener();
+
+    try {
+      const mode = await getBridge().getTagFilterMode();
+      set({ tagFilterMode: normalizeMode(mode) });
+    } catch (error) {
+      set({ error: getErrorMessage(error) });
+    }
+
     await get().refreshSearch();
   },
 
@@ -290,7 +382,7 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
-  async saveMetadata(imageId, { caption, tags }) {
+  async saveMetadata(imageId, { caption, tagIds }) {
     if (!imageId) {
       return;
     }
@@ -299,10 +391,55 @@ export const useAppStore = create((set, get) => ({
     try {
       const bridge = getBridge();
       await bridge.updateImageCaption(imageId, caption);
-      await bridge.updateImageTags(imageId, tags);
+      await bridge.updateImageTags(imageId, tagIds);
       await get().refreshSearch();
       await get().reloadSelectedDetail();
       set({ saving: false });
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async createTag(payload) {
+    set({ saving: true, error: null });
+    try {
+      const tag = await getBridge().createTag(payload);
+      await get().refreshSearch();
+      await get().reloadSelectedDetail();
+      set({ saving: false });
+      return tag;
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async updateTag(payload) {
+    set({ saving: true, error: null });
+    try {
+      const tag = await getBridge().updateTag(payload);
+      await get().refreshSearch();
+      await get().reloadSelectedDetail();
+      set({ saving: false });
+      return tag;
+    } catch (error) {
+      set({ saving: false, error: getErrorMessage(error) });
+      throw error;
+    }
+  },
+
+  async deleteTag(tagId) {
+    set({ saving: true, error: null });
+    try {
+      const result = await getBridge().deleteTag(tagId);
+      set((state) => ({
+        selectedTagIds: state.selectedTagIds.filter((id) => id !== Number(tagId)),
+      }));
+      await get().refreshSearch();
+      await get().reloadSelectedDetail();
+      set({ saving: false });
+      return result;
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
       throw error;

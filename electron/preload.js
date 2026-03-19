@@ -42,8 +42,8 @@ contextBridge.exposeInMainWorld('inspira', {
   updateImageCaption(imageId, content) {
     return ipcRenderer.invoke('inspiradb:update-caption', { imageId, content });
   },
-  updateImageTags(imageId, tags) {
-    return ipcRenderer.invoke('inspiradb:update-tags', { imageId, tags });
+  updateImageTags(imageId, tagIds) {
+    return ipcRenderer.invoke('inspiradb:update-tags', { imageId, tagIds });
   },
   rebuildImageAnalysis(imageId) {
     return ipcRenderer.invoke('inspiradb:reanalyze', imageId);
@@ -51,7 +51,25 @@ contextBridge.exposeInMainWorld('inspira', {
   deleteImage(imageId) {
     return ipcRenderer.invoke('inspiradb:delete', imageId);
   },
-  getFilterTags(query) {
-    return ipcRenderer.invoke('inspiradb:filter-tags', query);
+  getFilterTags(payload) {
+    return ipcRenderer.invoke('inspiradb:filter-tags', payload);
+  },
+  listTagTree() {
+    return ipcRenderer.invoke('inspiradb:list-tag-tree');
+  },
+  createTag(payload) {
+    return ipcRenderer.invoke('inspiradb:create-tag', payload);
+  },
+  updateTag(payload) {
+    return ipcRenderer.invoke('inspiradb:update-tag', payload);
+  },
+  deleteTag(tagId) {
+    return ipcRenderer.invoke('inspiradb:delete-tag', tagId);
+  },
+  getTagFilterMode() {
+    return ipcRenderer.invoke('inspiradb:get-tag-filter-mode');
+  },
+  setTagFilterMode(mode) {
+    return ipcRenderer.invoke('inspiradb:set-tag-filter-mode', mode);
   },
 });

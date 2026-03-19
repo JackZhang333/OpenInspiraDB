@@ -28,6 +28,24 @@ import {
   readXmpMetadataForImage,
   writeXmpForImage,
 } from '../utils/xmp.js';
+import {
+  DEFAULT_TAG_FILTER_MODE,
+  TAG_LEVEL_CHILD,
+  TAG_LEVEL_PARENT,
+  getTagById,
+  getTagFilterMode as readTagFilterMode,
+  getUncategorizedParentTag,
+  listEffectiveTagRecords,
+  listImageTagsBySource,
+  listParentTags,
+  listTagTree,
+  normalizeTagFilterMode,
+  normalizeTagIds,
+  resolveSecondaryTagIdsByNames,
+  setAppSetting,
+  validateSecondaryTagIds,
+  ensureSecondaryTag,
+} from './tag-store.js';
 import { createLogger } from '../utils/logger.js';
 import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { RoutedAiService } from '../services/ai-factory.js';
@@ -89,6 +107,19 @@ function buildInClauseParams(prefix, values) {
     clause: placeholders.join(', '),
     params,
   };
+}
+
+function normalizeSelectedTagIds(db, selectedTagIds = []) {
+  const normalizedIds = normalizeTagIds(selectedTagIds);
+  if (normalizedIds.length > 0) {
+    return normalizedIds;
+  }
+
+  if (!Array.isArray(selectedTagIds) || selectedTagIds.length === 0) {
+    return [];
+  }
+
+  return resolveSecondaryTagIdsByNames(db, selectedTagIds);
 }
 
 function normalizeSearchText(text) {
@@ -399,6 +430,18 @@ export class InspiraDBApp {
     return Number(row?.total || 0);
   }
 
+  getTagFilterMode() {
+    return readTagFilterMode(this.db);
+  }
+
+  setTagFilterMode(mode) {
+    const nextMode = normalizeTagFilterMode(mode);
+    setAppSetting(this.db, 'tag_filter_mode', nextMode, nowIso());
+    return {
+      mode: nextMode,
+    };
+  }
+
   ensureImportCapacity() {
     const total = this.getImageCount();
     if (total < MAX_IMAGE_COUNT) {
@@ -410,6 +453,277 @@ export class InspiraDBApp {
     error.limit = MAX_IMAGE_COUNT;
     error.currentCount = total;
     throw error;
+  }
+
+  getEffectiveTagRecords(imageId) {
+    return listEffectiveTagRecords(this.db, imageId);
+  }
+
+  getEffectiveTags(imageId) {
+    return this.getEffectiveTagRecords(imageId).map((tag) => tag.name);
+  }
+
+  getAiSuggestedTagRecords(imageId) {
+    return listImageTagsBySource(this.db, imageId, 'ai');
+  }
+
+  listTagTree() {
+    return listTagTree(this.db);
+  }
+
+  createTag(payload = {}) {
+    const level = Number(payload.level || TAG_LEVEL_CHILD);
+    const name = String(payload.name || '').trim();
+    if (!name) {
+      const error = new Error('EMPTY_TAG_NAME');
+      error.code = 'EMPTY_TAG_NAME';
+      throw error;
+    }
+
+    const createdAt = nowIso();
+
+    if (level === TAG_LEVEL_PARENT) {
+      const existing = this.db.get(
+        `SELECT id
+         FROM tags
+         WHERE name = :name
+           AND language = 'zh'
+         LIMIT 1`,
+        { name },
+      );
+
+      if (existing) {
+        const error = new Error('TAG_ALREADY_EXISTS');
+        error.code = 'TAG_ALREADY_EXISTS';
+        throw error;
+      }
+
+      const sortRow = this.db.get(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+         FROM tags
+         WHERE level = :level`,
+        { level: TAG_LEVEL_PARENT },
+      );
+
+      const insert = this.db.run(
+        `INSERT INTO tags (
+          name,
+          language,
+          parent_id,
+          level,
+          sort_order,
+          is_system,
+          created_at,
+          updated_at
+        ) VALUES (
+          :name,
+          'zh',
+          NULL,
+          :level,
+          :sortOrder,
+          0,
+          :createdAt,
+          :updatedAt
+        )`,
+        {
+          name,
+          level: TAG_LEVEL_PARENT,
+          sortOrder: Number(sortRow?.next_sort_order || 0),
+          createdAt,
+          updatedAt: createdAt,
+        },
+      );
+
+      return getTagById(this.db, Number(insert.lastInsertRowid));
+    }
+
+    const existing = this.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = :name
+         AND language = 'zh'
+       LIMIT 1`,
+      { name },
+    );
+
+    if (existing) {
+      const error = new Error('TAG_ALREADY_EXISTS');
+      error.code = 'TAG_ALREADY_EXISTS';
+      throw error;
+    }
+
+    return ensureSecondaryTag(this.db, name, {
+      parentId: payload.parentId,
+      createdAt,
+    });
+  }
+
+  updateTag(payload = {}) {
+    const tagId = Number(payload.tagId || payload.id || 0);
+    const currentTag = getTagById(this.db, tagId);
+    if (!currentTag) {
+      const error = new Error('TAG_NOT_FOUND');
+      error.code = 'TAG_NOT_FOUND';
+      throw error;
+    }
+
+    const nextName = typeof payload.name === 'string'
+      ? String(payload.name || '').trim()
+      : currentTag.name;
+
+    if (!nextName) {
+      const error = new Error('EMPTY_TAG_NAME');
+      error.code = 'EMPTY_TAG_NAME';
+      throw error;
+    }
+
+    if (currentTag.isSystem) {
+      const parentChanged = Object.prototype.hasOwnProperty.call(payload, 'parentId')
+        && Number(payload.parentId || 0) !== Number(currentTag.parentId || 0);
+      if (nextName !== currentTag.name || parentChanged) {
+        const error = new Error('SYSTEM_TAG_LOCKED');
+        error.code = 'SYSTEM_TAG_LOCKED';
+        throw error;
+      }
+      return currentTag;
+    }
+
+    const conflict = this.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = :name
+         AND language = 'zh'
+         AND id != :tagId
+       LIMIT 1`,
+      {
+        name: nextName,
+        tagId,
+      },
+    );
+
+    if (conflict) {
+      const error = new Error('TAG_ALREADY_EXISTS');
+      error.code = 'TAG_ALREADY_EXISTS';
+      throw error;
+    }
+
+    const updatedAt = nowIso();
+
+    if (currentTag.level === TAG_LEVEL_PARENT) {
+      this.db.run(
+        `UPDATE tags
+         SET name = :name,
+             updated_at = :updatedAt
+         WHERE id = :tagId`,
+        {
+          tagId,
+          name: nextName,
+          updatedAt,
+        },
+      );
+      return getTagById(this.db, tagId);
+    }
+
+    let parentId = currentTag.parentId;
+    if (Object.prototype.hasOwnProperty.call(payload, 'parentId')) {
+      const nextParent = getTagById(this.db, Number(payload.parentId || 0));
+      if (!nextParent || nextParent.level !== TAG_LEVEL_PARENT) {
+        const error = new Error('PARENT_TAG_NOT_FOUND');
+        error.code = 'PARENT_TAG_NOT_FOUND';
+        throw error;
+      }
+      parentId = nextParent.id;
+    }
+
+    let nextSortOrder = currentTag.sortOrder;
+    if (parentId !== currentTag.parentId) {
+      const sortRow = this.db.get(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+         FROM tags
+         WHERE parent_id = :parentId
+           AND level = :level`,
+        {
+          parentId,
+          level: TAG_LEVEL_CHILD,
+        },
+      );
+      nextSortOrder = Number(sortRow?.next_sort_order || 0);
+    }
+
+    this.db.run(
+      `UPDATE tags
+       SET name = :name,
+           parent_id = :parentId,
+           sort_order = :sortOrder,
+           updated_at = :updatedAt
+       WHERE id = :tagId`,
+      {
+        tagId,
+        name: nextName,
+        parentId,
+        sortOrder: nextSortOrder,
+        updatedAt,
+      },
+    );
+
+    return getTagById(this.db, tagId);
+  }
+
+  deleteTag(tagId) {
+    const tag = getTagById(this.db, tagId);
+    if (!tag) {
+      const error = new Error('TAG_NOT_FOUND');
+      error.code = 'TAG_NOT_FOUND';
+      throw error;
+    }
+
+    if (tag.isSystem) {
+      const error = new Error('SYSTEM_TAG_LOCKED');
+      error.code = 'SYSTEM_TAG_LOCKED';
+      throw error;
+    }
+
+    if (tag.level === TAG_LEVEL_PARENT) {
+      const child = this.db.get(
+        `SELECT id
+         FROM tags
+         WHERE parent_id = :tagId
+         LIMIT 1`,
+        { tagId },
+      );
+
+      if (child) {
+        const error = new Error('TAG_HAS_CHILDREN');
+        error.code = 'TAG_HAS_CHILDREN';
+        throw error;
+      }
+
+      this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
+      return {
+        deleted: true,
+        tagId,
+      };
+    }
+
+    const usageRow = this.db.get(
+      `SELECT COUNT(*) AS total
+       FROM image_tags
+       WHERE tag_id = :tagId`,
+      { tagId },
+    );
+
+    if (Number(usageRow?.total || 0) > 0) {
+      const error = new Error('TAG_IN_USE');
+      error.code = 'TAG_IN_USE';
+      error.usageCount = Number(usageRow.total);
+      throw error;
+    }
+
+    this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
+    return {
+      deleted: true,
+      tagId,
+    };
   }
 
   async importFolder(folderPath, options = {}) {
@@ -951,24 +1265,15 @@ export class InspiraDBApp {
     return { jobId, status: JOB_STATUS.PENDING };
   }
 
-  async searchImages(query = '', selectedTags = [], pagination = {}) {
+  async collectSearchItems(query = '', selectedTagIds = [], filterMode = DEFAULT_TAG_FILTER_MODE) {
     const cleanQuery = String(query || '').trim();
-    const tags = uniqueNonEmptyTags(selectedTags || []);
-    const page = Number(pagination.page || 1);
-    const pageSize = Math.min(Number(pagination.pageSize || SEARCH_PAGE_SIZE), SEARCH_PAGE_SIZE);
-    const offset = (Math.max(page, 1) - 1) * pageSize;
-
-    const candidates = this.getReadyImagesByTags(tags);
+    const normalizedTagIds = normalizeSelectedTagIds(this.db, selectedTagIds);
+    const effectiveFilterMode = normalizeTagFilterMode(filterMode);
+    const candidates = this.getReadyImagesByTagIds(normalizedTagIds, effectiveFilterMode);
 
     if (cleanQuery.length === 0) {
       const sorted = [...candidates].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-      const paged = sorted.slice(offset, offset + pageSize);
-      return {
-        total: sorted.length,
-        page,
-        pageSize,
-        items: this.attachActiveDataForImages(paged),
-      };
+      return this.attachActiveDataForImages(sorted);
     }
 
     const searchProfile = buildSearchProfile(cleanQuery);
@@ -1015,23 +1320,38 @@ export class InspiraDBApp {
       return a.distance - b.distance;
     });
 
-    const paged = scored.slice(offset, offset + pageSize).map((item) => ({
+    return this.attachActiveDataForImages(scored.map((item) => ({
       ...item.image,
       distance: Number(item.distance.toFixed(6)),
       score: Number(item.score.toFixed(6)),
       lexicalScore: Number(item.lexicalScore.toFixed(6)),
-    }));
+    })));
+  }
+
+  async searchImages(query = '', selectedTagIds = [], filterModeOrPagination = {}, maybePagination = null) {
+    const filterMode = typeof filterModeOrPagination === 'string'
+      ? normalizeTagFilterMode(filterModeOrPagination)
+      : DEFAULT_TAG_FILTER_MODE;
+    const pagination = typeof filterModeOrPagination === 'string'
+      ? (maybePagination || {})
+      : (filterModeOrPagination || {});
+    const page = Number(pagination.page || 1);
+    const pageSize = Math.min(Number(pagination.pageSize || SEARCH_PAGE_SIZE), SEARCH_PAGE_SIZE);
+    const offset = (Math.max(page, 1) - 1) * pageSize;
+    const items = await this.collectSearchItems(query, selectedTagIds, filterMode);
+    const paged = items.slice(offset, offset + pageSize);
 
     return {
-      total: scored.length,
+      total: items.length,
       page,
       pageSize,
-      items: this.attachActiveDataForImages(paged),
+      items: paged,
     };
   }
 
-  getReadyImagesByTags(selectedTags) {
-    if (!selectedTags.length) {
+  getReadyImagesByTagIds(selectedTagIds, filterMode = DEFAULT_TAG_FILTER_MODE) {
+    const normalizedTagIds = normalizeTagIds(selectedTagIds);
+    if (!normalizedTagIds.length) {
       return this.db.all(
         `SELECT *
          FROM images
@@ -1040,25 +1360,33 @@ export class InspiraDBApp {
       );
     }
 
-    const { clause, params } = buildInClauseParams('tag', selectedTags);
+    const { clause, params } = buildInClauseParams('tag', normalizedTagIds);
+    const effectiveFilterMode = normalizeTagFilterMode(filterMode);
     const query = `
-      SELECT i.*
+      SELECT DISTINCT i.*
       FROM images i
       JOIN image_tags it ON it.image_id = i.id
       JOIN tags t ON t.id = it.tag_id
       WHERE i.analysis_status = :ready
         AND ((i.active_tag_source = 'user' AND it.source = 'user')
              OR (i.active_tag_source = 'ai' AND it.source = 'ai'))
-        AND t.name IN (${clause})
+        AND t.level = :level
+        AND t.id IN (${clause})
       GROUP BY i.id
-      HAVING COUNT(DISTINCT t.name) = :tagCount
+      ${effectiveFilterMode === 'and' ? 'HAVING COUNT(DISTINCT t.id) = :tagCount' : ''}
     `;
 
-    return this.db.all(query, {
+    const queryParams = {
       ready: IMAGE_STATUS.READY,
-      tagCount: selectedTags.length,
+      level: TAG_LEVEL_CHILD,
       ...params,
-    });
+    };
+
+    if (effectiveFilterMode === 'and') {
+      queryParams.tagCount = normalizedTagIds.length;
+    }
+
+    return this.db.all(query, queryParams);
   }
 
   attachActiveDataForImages(images) {
@@ -1070,36 +1398,15 @@ export class InspiraDBApp {
         { captionId: image.active_caption_id },
       );
 
-      const tags = this.getEffectiveTags(image.id);
+      const tagRecords = this.getEffectiveTagRecords(image.id);
 
       return {
         ...image,
         activeCaption,
-        tags,
+        tags: tagRecords.map((tag) => tag.name),
+        tagDetails: tagRecords,
       };
     });
-  }
-
-  getEffectiveTags(imageId) {
-    const image = this.db.get('SELECT id, active_tag_source FROM images WHERE id = :imageId', { imageId });
-    if (!image) {
-      return [];
-    }
-
-    const rows = this.db.all(
-      `SELECT t.name
-       FROM image_tags it
-       JOIN tags t ON t.id = it.tag_id
-       WHERE it.image_id = :imageId
-         AND it.source = :source
-       ORDER BY t.name ASC`,
-      {
-        imageId,
-        source: image.active_tag_source === 'user' ? 'user' : 'ai',
-      },
-    );
-
-    return rows.map((row) => row.name);
   }
 
   getImageDetail(imageId) {
@@ -1116,20 +1423,12 @@ export class InspiraDBApp {
       `SELECT *
        FROM captions
        WHERE image_id = :imageId
-       ORDER BY created_at DESC`,
+      ORDER BY created_at DESC`,
       { imageId },
     );
 
-    const effectiveTags = this.getEffectiveTags(imageId);
-    const aiSuggestedTags = this.db.all(
-      `SELECT t.name
-       FROM image_tags it
-       JOIN tags t ON t.id = it.tag_id
-       WHERE it.image_id = :imageId
-         AND it.source = 'ai'
-       ORDER BY t.name ASC`,
-      { imageId },
-    ).map((row) => row.name);
+    const effectiveTags = this.getEffectiveTagRecords(imageId);
+    const aiSuggestedTags = this.getAiSuggestedTagRecords(imageId);
 
     const latestJob = this.db.get(
       `SELECT *
@@ -1144,14 +1443,22 @@ export class InspiraDBApp {
       image,
       activeCaption,
       effectiveTags,
+      effectiveTagNames: effectiveTags.map((tag) => tag.name),
       aiSuggestedTags,
+      aiSuggestedTagNames: aiSuggestedTags.map((tag) => tag.name),
       captionHistory,
       latestJob,
     };
   }
 
-  upsertImageTagsBySource(imageId, tags, source, createdAt) {
-    const normalizedTags = uniqueNonEmptyTags(tags || []);
+  upsertImageTagsBySource(imageId, tags, source, createdAt, options = {}) {
+    const inputMode = options.inputMode === 'ids' ? 'ids' : 'names';
+    const tagRows = inputMode === 'ids'
+      ? validateSecondaryTagIds(this.db, tags)
+      : resolveSecondaryTagIdsByNames(this.db, tags, {
+        parentId: options.parentId,
+        createdAt,
+      }).map((tagId) => getTagById(this.db, tagId)).filter(Boolean);
 
     this.db.run(
       `DELETE FROM image_tags
@@ -1160,25 +1467,7 @@ export class InspiraDBApp {
       { imageId, source },
     );
 
-    for (const tagName of normalizedTags) {
-      this.db.run(
-        `INSERT INTO tags (name, language, created_at)
-         VALUES (:name, 'zh', :createdAt)
-         ON CONFLICT(name, language) DO NOTHING`,
-        {
-          name: tagName,
-          createdAt,
-        },
-      );
-
-      const tag = this.db.get("SELECT id FROM tags WHERE name = :name AND language = 'zh'", {
-        name: tagName,
-      });
-
-      if (!tag) {
-        continue;
-      }
-
+    for (const tag of tagRows) {
       this.db.run(
         `INSERT INTO image_tags (image_id, tag_id, source, created_at)
          VALUES (:imageId, :tagId, :source, :createdAt)
@@ -1192,7 +1481,7 @@ export class InspiraDBApp {
       );
     }
 
-    return normalizedTags;
+    return tagRows;
   }
 
   getImageWritebackMetadata(imageId) {
@@ -1349,15 +1638,25 @@ export class InspiraDBApp {
     return { imageId, captionId, ...embeddingResult, xmpSidecarPath };
   }
 
-  async updateImageTags(imageId, tags) {
+  async updateImageTags(imageId, tagIds) {
     const image = this.db.get('SELECT id FROM images WHERE id = :imageId', { imageId });
     if (!image) {
       throw new Error('IMAGE_NOT_FOUND');
     }
 
+    const normalizedTagIds = normalizeTagIds(tagIds);
+    const useIdInput = normalizedTagIds.length > 0
+      || (Array.isArray(tagIds) && tagIds.length === 0);
+
     this.db.transaction(() => {
       const now = nowIso();
-      this.upsertImageTagsBySource(imageId, tags, 'user', now);
+      this.upsertImageTagsBySource(
+        imageId,
+        useIdInput ? normalizedTagIds : tagIds,
+        'user',
+        now,
+        { inputMode: useIdInput ? 'ids' : 'names' },
+      );
 
       this.db.run(
         `UPDATE images
@@ -1385,7 +1684,8 @@ export class InspiraDBApp {
     return {
       imageId,
       activeTagSource: 'user',
-      tags: this.getEffectiveTags(imageId),
+      tags: this.getEffectiveTagRecords(imageId),
+      tagNames: this.getEffectiveTags(imageId),
       ...embeddingResult,
       xmpSidecarPath,
     };
@@ -1567,27 +1867,18 @@ export class InspiraDBApp {
     };
   }
 
-  async getFilterTags(query = '') {
+  async getFilterTags(query = '', selectedTagIds = [], filterMode = DEFAULT_TAG_FILTER_MODE) {
     const cleanQuery = String(query || '').trim();
-    const sourceItems = cleanQuery
-      ? (await this.searchImages(cleanQuery, [], { page: 1, pageSize: SEARCH_PAGE_SIZE })).items
-      : this.attachActiveDataForImages(this.getReadyImagesByTags([]));
+    const sourceItems = await this.collectSearchItems(cleanQuery, selectedTagIds, filterMode);
 
     const counter = new Map();
     for (const item of sourceItems) {
-      for (const tag of item.tags || []) {
-        counter.set(tag, (counter.get(tag) || 0) + 1);
+      for (const tag of item.tagDetails || []) {
+        counter.set(tag.id, (counter.get(tag.id) || 0) + 1);
       }
     }
 
-    return Array.from(counter.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => {
-        if (b.count === a.count) {
-          return a.name.localeCompare(b.name);
-        }
-        return b.count - a.count;
-      });
+    return listTagTree(this.db, counter);
   }
 
 }

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -94,6 +95,138 @@ function assertVectorsAlmostEqual(actual, expected, epsilon = 1e-12) {
   }
 }
 
+function insertReadyImageWithTagIds(app, {
+  fileName,
+  hash,
+  caption,
+  tagIds,
+  vector,
+  source = 'ai',
+  updatedAt = '2026-03-18T10:00:00.000Z',
+}) {
+  const now = '2026-03-18T09:00:00.000Z';
+  const imageResult = app.db.run(
+    `INSERT INTO images (
+      original_file_name,
+      source_path,
+      library_path,
+      thumbnail_path,
+      md5_hash,
+      file_size,
+      width,
+      height,
+      import_status,
+      analysis_status,
+      active_tag_source,
+      created_at,
+      updated_at
+    ) VALUES (
+      :fileName,
+      :sourcePath,
+      :libraryPath,
+      :thumbnailPath,
+      :hash,
+      100,
+      NULL,
+      NULL,
+      'imported',
+      'ready',
+      :source,
+      :createdAt,
+      :updatedAt
+    )`,
+    {
+      fileName,
+      sourcePath: `/tmp/${fileName}`,
+      libraryPath: `/tmp/${fileName}`,
+      thumbnailPath: `/tmp/${fileName}.thumb`,
+      hash,
+      source,
+      createdAt: now,
+      updatedAt,
+    },
+  );
+
+  const imageId = Number(imageResult.lastInsertRowid);
+  const captionResult = app.db.run(
+    `INSERT INTO captions (
+      image_id,
+      content,
+      source,
+      is_active,
+      model_provider,
+      model_name,
+      created_at,
+      updated_at
+    ) VALUES (
+      :imageId,
+      :content,
+      :source,
+      1,
+      'zhipu',
+      'glm-test-vision',
+      :createdAt,
+      :updatedAt
+    )`,
+    {
+      imageId,
+      content: caption,
+      source,
+      createdAt: now,
+      updatedAt,
+    },
+  );
+
+  app.db.run(
+    `UPDATE images
+     SET active_caption_id = :captionId
+     WHERE id = :imageId`,
+    {
+      imageId,
+      captionId: Number(captionResult.lastInsertRowid),
+    },
+  );
+
+  for (const tagId of tagIds) {
+    app.db.run(
+      `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+       VALUES (:imageId, :tagId, :source, :createdAt)`,
+      {
+        imageId,
+        tagId,
+        source,
+        createdAt: now,
+      },
+    );
+  }
+
+  app.db.run(
+    `INSERT INTO embeddings (
+      image_id,
+      vector,
+      dimension,
+      model_provider,
+      model_name,
+      created_at
+    ) VALUES (
+      :imageId,
+      :vector,
+      :dimension,
+      'zhipu',
+      'embedding-3',
+      :createdAt
+    )`,
+    {
+      imageId,
+      vector: JSON.stringify(vector),
+      dimension: vector.length,
+      createdAt: now,
+    },
+  );
+
+  return imageId;
+}
+
 test('import -> analyze -> search -> user override rules', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-test-'));
   const app = createTestApp({ rootDir: root, autoStartQueue: true });
@@ -130,7 +263,7 @@ test('import -> analyze -> search -> user override rules', async () => {
     const embeddingAfterTagUpdate = app.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId });
     assertVectorsAlmostEqual(
       JSON.parse(embeddingAfterTagUpdate.vector),
-      embedTextDeterministic(buildEmbeddingText('这是人工修订的品牌海报参考描述', tagResult.tags)),
+      embedTextDeterministic(buildEmbeddingText('这是人工修订的品牌海报参考描述', tagResult.tagNames)),
     );
 
     await app.rebuildImageAnalysis(imageId);
@@ -139,12 +272,15 @@ test('import -> analyze -> search -> user override rules', async () => {
     const detailAfterReanalyze = app.getImageDetail(imageId);
     assert.equal(detailAfterReanalyze.activeCaption?.source, 'user');
     assert.equal(detailAfterReanalyze.activeCaption?.content, '这是人工修订的品牌海报参考描述');
-    assert.deepEqual(detailAfterReanalyze.effectiveTags.sort(), ['品牌', '极简', '海报'].sort());
+    assert.deepEqual(
+      detailAfterReanalyze.effectiveTags.map((tag) => tag.name).sort(),
+      ['品牌', '极简', '海报'].sort(),
+    );
 
     const embeddingAfterReanalyze = app.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId });
     assertVectorsAlmostEqual(
       JSON.parse(embeddingAfterReanalyze.vector),
-      embedTextDeterministic(buildEmbeddingText(detailAfterReanalyze.activeCaption.content, detailAfterReanalyze.effectiveTags)),
+      embedTextDeterministic(buildEmbeddingText(detailAfterReanalyze.activeCaption.content, detailAfterReanalyze.effectiveTagNames)),
     );
 
     const searchResult = await app.searchImages('品牌海报', ['品牌']);
@@ -696,5 +832,233 @@ test('searchImages boosts cute-intent queries toward baby subjects over scenery'
     assert.ok(result.items[0].lexicalScore > 0);
   } finally {
     app.close();
+  }
+});
+
+test('database migration moves flat tags under the uncategorized parent', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-migration-test-'));
+  const dbPath = path.join(root, 'data', 'inspiradb.sqlite');
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  const legacyDb = new DatabaseSync(dbPath);
+  legacyDb.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_file_name TEXT NOT NULL,
+      source_path TEXT NOT NULL,
+      library_path TEXT NOT NULL,
+      thumbnail_path TEXT NOT NULL,
+      md5_hash TEXT NOT NULL UNIQUE,
+      file_size INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      import_status TEXT NOT NULL DEFAULT 'imported',
+      analysis_status TEXT NOT NULL DEFAULT 'ready',
+      active_caption_id INTEGER,
+      active_tag_source TEXT NOT NULL DEFAULT 'ai',
+      needs_embedding_refresh INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      language TEXT NOT NULL DEFAULT 'zh',
+      created_at TEXT NOT NULL,
+      UNIQUE(name, language)
+    );
+    CREATE TABLE app_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      api_provider TEXT NOT NULL DEFAULT 'mock',
+      api_key_ref TEXT,
+      cloud_analysis_enabled INTEGER NOT NULL DEFAULT 0,
+      library_root_path TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE image_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      image_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(image_id, tag_id, source)
+    );
+  `);
+
+  legacyDb.prepare(
+    `INSERT INTO images (
+      original_file_name,
+      source_path,
+      library_path,
+      thumbnail_path,
+      md5_hash,
+      file_size,
+      created_at,
+      updated_at
+    ) VALUES (
+      'legacy.jpg',
+      '/tmp/legacy.jpg',
+      '/tmp/legacy.jpg',
+      '/tmp/legacy.jpg.thumb',
+      'legacy-hash',
+      100,
+      '2026-03-18T10:00:00.000Z',
+      '2026-03-18T10:00:00.000Z'
+    )`,
+  ).run();
+  legacyDb.prepare(
+    `INSERT INTO tags (name, language, created_at)
+     VALUES ('旧标签', 'zh', '2026-03-18T10:00:00.000Z')`,
+  ).run();
+  legacyDb.prepare(
+    `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+     VALUES (1, 1, 'ai', '2026-03-18T10:00:00.000Z')`,
+  ).run();
+  legacyDb.close();
+
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const uncategorized = app.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '未分组'
+         AND level = 1`,
+    );
+    assert.ok(uncategorized?.id);
+
+    const migratedTag = app.db.get(
+      `SELECT id, parent_id, level
+       FROM tags
+       WHERE name = '旧标签'`,
+    );
+    assert.equal(migratedTag.level, 2);
+    assert.equal(migratedTag.parent_id, uncategorized.id);
+
+    const relation = app.db.get(
+      `SELECT tag_id
+       FROM image_tags
+       WHERE image_id = 1
+         AND source = 'ai'`,
+    );
+    assert.equal(relation.tag_id, migratedTag.id);
+
+    const backupSettingsTable = app.db.get(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name LIKE 'app_settings_legacy_v%'`,
+    );
+    assert.ok(backupSettingsTable?.name);
+
+    const nextSetting = app.db.get(
+      `SELECT value
+       FROM app_settings
+       WHERE key = 'tag_filter_mode'`,
+    );
+    assert.equal(nextSetting?.value, 'and');
+  } finally {
+    app.close();
+  }
+});
+
+test('searchImages applies AND/OR filtering across secondary tags', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-filter-mode-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const themeGroup = app.createTag({ name: '主题', level: 1 });
+    const styleGroup = app.createTag({ name: '风格', level: 1 });
+    const brandTag = app.createTag({ name: '品牌', level: 2, parentId: themeGroup.id });
+    const posterTag = app.createTag({ name: '海报', level: 2, parentId: themeGroup.id });
+    const minimalTag = app.createTag({ name: '极简', level: 2, parentId: styleGroup.id });
+
+    const imageBrandMinimal = insertReadyImageWithTagIds(app, {
+      fileName: 'brand-minimal.jpg',
+      hash: 'filter-brand-minimal',
+      caption: '品牌海报采用极简留白布局。',
+      tagIds: [brandTag.id, posterTag.id, minimalTag.id],
+      vector: embedTextDeterministic('品牌 海报 极简'),
+      updatedAt: '2026-03-18T12:00:00.000Z',
+    });
+
+    const imageBrandOnly = insertReadyImageWithTagIds(app, {
+      fileName: 'brand-only.jpg',
+      hash: 'filter-brand-only',
+      caption: '品牌视觉延展物料。',
+      tagIds: [brandTag.id],
+      vector: embedTextDeterministic('品牌 视觉'),
+      updatedAt: '2026-03-18T11:00:00.000Z',
+    });
+
+    const imageMinimalOnly = insertReadyImageWithTagIds(app, {
+      fileName: 'minimal-only.jpg',
+      hash: 'filter-minimal-only',
+      caption: '极简风格的版式研究。',
+      tagIds: [minimalTag.id],
+      vector: embedTextDeterministic('极简 版式'),
+      updatedAt: '2026-03-18T10:00:00.000Z',
+    });
+
+    const andResult = await app.searchImages('', [brandTag.id, minimalTag.id], 'and', { page: 1, pageSize: 50 });
+    assert.deepEqual(andResult.items.map((item) => item.id), [imageBrandMinimal]);
+
+    const orResult = await app.searchImages('', [brandTag.id, minimalTag.id], 'or', { page: 1, pageSize: 50 });
+    assert.deepEqual(
+      new Set(orResult.items.map((item) => item.id)),
+      new Set([imageBrandMinimal, imageBrandOnly, imageMinimalOnly]),
+    );
+
+    const tagTree = await app.getFilterTags('', [brandTag.id, minimalTag.id], 'or');
+    const themeNode = tagTree.find((group) => group.id === themeGroup.id);
+    const styleNode = tagTree.find((group) => group.id === styleGroup.id);
+    assert.equal(themeNode.children.find((tag) => tag.id === brandTag.id).count, 2);
+    assert.equal(styleNode.children.find((tag) => tag.id === minimalTag.id).count, 2);
+  } finally {
+    app.close();
+  }
+});
+
+test('tag filter mode persists and tag CRUD manages hierarchy', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-tag-crud-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    assert.equal(app.getTagFilterMode(), 'and');
+    assert.equal(app.setTagFilterMode('or').mode, 'or');
+
+    const usageGroup = app.createTag({ name: '用途', level: 1 });
+    const styleGroup = app.createTag({ name: '版式风格', level: 1 });
+    const heroTag = app.createTag({ name: '首页横幅', level: 2, parentId: usageGroup.id });
+
+    const updatedTag = app.updateTag({
+      tagId: heroTag.id,
+      name: '首页头图',
+      parentId: styleGroup.id,
+    });
+
+    assert.equal(updatedTag.name, '首页头图');
+    assert.equal(updatedTag.parentId, styleGroup.id);
+
+    const tree = app.listTagTree();
+    assert.ok(tree.some((group) => group.name === '用途'));
+    assert.ok(tree.some((group) => group.name === '版式风格' && group.children.some((tag) => tag.name === '首页头图')));
+
+    const deletedChild = app.deleteTag(updatedTag.id);
+    assert.equal(deletedChild.deleted, true);
+
+    const deletedGroup = app.deleteTag(usageGroup.id);
+    assert.equal(deletedGroup.deleted, true);
+  } finally {
+    app.close();
+  }
+
+  const reopened = createTestApp({ rootDir: root, autoStartQueue: false });
+  try {
+    assert.equal(reopened.getTagFilterMode(), 'or');
+  } finally {
+    reopened.close();
   }
 });

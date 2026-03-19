@@ -8,8 +8,10 @@ export function LibraryWorkspace({
   onQueryDraftChange,
   onSubmitSearch,
   onRefresh,
-  selectedTag,
-  onClearTag,
+  selectedTags,
+  filterMode,
+  onToggleTag,
+  onClearTags,
   result,
   selectedImageId,
   onSelectImage,
@@ -17,14 +19,13 @@ export function LibraryWorkspace({
   hasMore = false,
   onLoadMore,
 }) {
-  const hasTagFilter = Boolean(selectedTag);
+  const hasTagFilter = Boolean(selectedTags?.length);
   const [columnCount, setColumnCount] = useState(5);
   const [hoveredCardId, setHoveredCardId] = useState(null);
   const [dismissedCardId, setDismissedCardId] = useState(null);
   const loadMoreRef = useRef(null);
   const scrollContainerRef = useRef(null);
 
-  // Infinite scroll observer
   useEffect(() => {
     if (!loadMoreRef.current || !hasMore || loading) return;
 
@@ -34,7 +35,7 @@ export function LibraryWorkspace({
           onLoadMore();
         }
       },
-      { root: scrollContainerRef.current, threshold: 0.01, rootMargin: '100px' }
+      { root: scrollContainerRef.current, threshold: 0.01, rootMargin: '100px' },
     );
 
     observer.observe(loadMoreRef.current);
@@ -66,10 +67,7 @@ export function LibraryWorkspace({
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {
@@ -93,7 +91,6 @@ export function LibraryWorkspace({
     setDismissedCardId((currentId) => (currentId === cardId ? null : currentId));
   }, []);
 
-  // Distribute items into columns
   const columns = useMemo(() => {
     const cols = Array.from({ length: columnCount }, () => []);
     (result.items || []).forEach((item, index) => {
@@ -102,10 +99,9 @@ export function LibraryWorkspace({
     return cols;
   }, [result.items, columnCount]);
 
-  // Skeleton columns for loading state
   const skeletonColumns = useMemo(() => {
     const cols = Array.from({ length: columnCount }, () => []);
-    const skeletonCount = columnCount * 3; // 3 skeletons per column
+    const skeletonCount = columnCount * 3;
     Array.from({ length: skeletonCount }).forEach((_, index) => {
       cols[index % columnCount].push(index);
     });
@@ -176,21 +172,31 @@ export function LibraryWorkspace({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
-        {selectedTag ? (
-          <div className="mb-3 flex items-center gap-2">
-            <Badge variant="secondary" className="bg-moss/10 text-moss">
-              {selectedTag}
+        {selectedTags?.length ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="bg-clay/15 text-ink/70">
+              {filterMode === 'or' ? '任意（OR）' : '全部（AND）'}
             </Badge>
+            {selectedTags.map((tag) => (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() => onToggleTag?.(tag.id)}
+                className="inline-flex items-center gap-1 rounded-full bg-moss/10 px-3 py-1 text-xs font-medium text-moss transition hover:bg-moss/20"
+              >
+                <span>{tag.name}</span>
+                <X className="h-3 w-3" />
+              </button>
+            ))}
             <button
-              onClick={onClearTag}
+              onClick={onClearTags}
               className="text-xs text-ink/40 transition hover:text-ink/70"
             >
-              清除
+              清空
             </button>
           </div>
         ) : null}
 
-        {/* Loading State - Skeleton */}
         {loading && result.items.length === 0 && (
           <div className="min-h-0 flex-1 overflow-hidden">
             <div className="flex items-start gap-3">
@@ -205,7 +211,6 @@ export function LibraryWorkspace({
           </div>
         )}
 
-        {/* Empty State */}
         {!loading && result.items.length === 0 && (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
@@ -213,17 +218,16 @@ export function LibraryWorkspace({
                 <Search className="h-6 w-6 text-ink/20" />
               </div>
               <p className="text-sm text-ink/40">暂无结果</p>
-              <p className="mt-1 text-xs text-ink/30">尝试语义描述或从左侧选择标签</p>
+              <p className="mt-1 text-xs text-ink/30">尝试语义描述或从左侧选择二级标签</p>
             </div>
           </div>
         )}
 
-        {/* Gallery Grid */}
         {result.items.length > 0 && (
           <div
             ref={scrollContainerRef}
             className="min-h-0 flex-1 overflow-auto overscroll-contain"
-            style={{ contain: 'strict' }} // CSS containment for better performance
+            style={{ contain: 'strict' }}
           >
             <div className="flex items-start gap-3">
               {columns.map((columnItems, colIndex) => (
@@ -242,12 +246,8 @@ export function LibraryWorkspace({
               ))}
             </div>
 
-            {/* Load More Sentinel */}
             {hasMore && (
-              <div
-                ref={loadMoreRef}
-                className="flex items-center justify-center py-6"
-              >
+              <div ref={loadMoreRef} className="flex items-center justify-center py-6">
                 <div className="flex items-center gap-2 text-sm text-ink/40">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>加载更多...</span>
@@ -255,7 +255,6 @@ export function LibraryWorkspace({
               </div>
             )}
 
-            {/* Loading More Indicator */}
             {loading && hasMore && (
               <div className="flex items-center justify-center py-4">
                 <div className="flex items-center gap-2 text-sm text-ink/40">
@@ -265,7 +264,6 @@ export function LibraryWorkspace({
               </div>
             )}
 
-            {/* End of Results */}
             {!hasMore && result.items.length > 0 && (
               <div className="flex items-center justify-center py-6 text-xs text-ink/30">
                 已加载全部 {result.total} 张图片

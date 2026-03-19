@@ -1,4 +1,5 @@
 import { nowIso } from '../core/database.js';
+import { ensureSecondaryTag } from '../core/tag-store.js';
 
 export function upsertEmbedding(db, imageId, vector, provider, modelName) {
   const now = nowIso();
@@ -58,14 +59,7 @@ export function saveAiTags(db, imageId, tagNames) {
   db.run("DELETE FROM image_tags WHERE image_id = :imageId AND source = 'ai'", { imageId });
 
   for (const tagName of tagNames) {
-    db.run(
-      `INSERT INTO tags (name, language, created_at)
-       VALUES (:name, 'zh', :createdAt)
-       ON CONFLICT(name, language) DO NOTHING`,
-      { name: tagName, createdAt: now },
-    );
-
-    const tag = db.get("SELECT id FROM tags WHERE name = :name AND language = 'zh'", { name: tagName });
+    const tag = ensureSecondaryTag(db, tagName, { createdAt: now });
     if (!tag) {
       continue;
     }

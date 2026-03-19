@@ -268,10 +268,15 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('inspiradb:search', async (_, payload = {}) => {
-    const searchResult = await inspiraApp.searchImages(payload.query, payload.selectedTags, {
+    const searchResult = await inspiraApp.searchImages(
+      payload.query,
+      payload.selectedTagIds,
+      payload.filterMode,
+      {
       page: payload.page,
       pageSize: payload.pageSize,
-    });
+      },
+    );
 
     return decorateSearchItems(searchResult);
   });
@@ -285,7 +290,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('inspiradb:update-tags', (_, payload = {}) => {
-    return inspiraApp.updateImageTags(payload.imageId, payload.tags);
+    return inspiraApp.updateImageTags(payload.imageId, payload.tagIds);
   });
 
   ipcMain.handle('inspiradb:reanalyze', (_, imageId) => {
@@ -296,8 +301,32 @@ function registerIpcHandlers() {
     return inspiraApp.deleteImage(imageId);
   });
 
-  ipcMain.handle('inspiradb:filter-tags', (_, query = '') => {
-    return inspiraApp.getFilterTags(query);
+  ipcMain.handle('inspiradb:filter-tags', (_, payload = {}) => {
+    return inspiraApp.getFilterTags(payload.query, payload.selectedTagIds, payload.filterMode);
+  });
+
+  ipcMain.handle('inspiradb:list-tag-tree', () => {
+    return inspiraApp.listTagTree();
+  });
+
+  ipcMain.handle('inspiradb:create-tag', (_, payload = {}) => {
+    return inspiraApp.createTag(payload);
+  });
+
+  ipcMain.handle('inspiradb:update-tag', (_, payload = {}) => {
+    return inspiraApp.updateTag(payload);
+  });
+
+  ipcMain.handle('inspiradb:delete-tag', (_, tagId) => {
+    return inspiraApp.deleteTag(tagId);
+  });
+
+  ipcMain.handle('inspiradb:get-tag-filter-mode', () => {
+    return inspiraApp.getTagFilterMode();
+  });
+
+  ipcMain.handle('inspiradb:set-tag-filter-mode', (_, mode) => {
+    return inspiraApp.setTagFilterMode(mode);
   });
 
 }
@@ -312,6 +341,9 @@ app.whenReady().then(() => {
       createMainWindow();
     }
   });
+}).catch((error) => {
+  console.error('app-startup-failed', error);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
