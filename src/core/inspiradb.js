@@ -44,6 +44,7 @@ import {
   resolveSecondaryTagIdsByNames,
   setAppSetting,
   validateSecondaryTagIds,
+  cleanupUnusedPresetTags,
   ensureSecondaryTag,
 } from './tag-store.js';
 import { createLogger } from '../utils/logger.js';
@@ -404,6 +405,7 @@ export class InspiraDBApp {
 
     this.logger = createLogger('inspiradb');
     this.db = new InspiraDatabase(this.paths.dbPath);
+    cleanupUnusedPresetTags(this.db);
     this.modelConfig = modelConfig;
 
     this.aiService = new RoutedAiService(this.db, this.logger, {

@@ -6,7 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { InspiraDBApp } from '../src/index.js';
+import { InspiraDatabase } from '../src/core/database.js';
 import { createModelConfig } from '../src/model-config.js';
+import { PRESET_TAXONOMY, UNCATEGORIZED_TAG_NAME } from '../src/core/tag-store.js';
 import { buildEmbeddingText } from '../src/utils/embedding.js';
 import { embedTextDeterministic } from '../src/utils/vector.js';
 
@@ -67,7 +69,26 @@ function installStubbedZhipuService(app) {
             message: {
               content: JSON.stringify({
                 caption: '这是一张设计参考图，画面包含清晰主体、构图线索与可检索风格信息。',
-                tags: ['设计参考', '视觉灵感', '构图'],
+                taxonomyTags: [
+                  {
+                    parentName: '行业 / 用途',
+                    childName: '海报',
+                    isNewParent: false,
+                    isNewChild: false,
+                  },
+                  {
+                    parentName: '风格',
+                    childName: '极简',
+                    isNewParent: false,
+                    isNewChild: false,
+                  },
+                  {
+                    parentName: '构图 / 形式',
+                    childName: '留白',
+                    isNewParent: false,
+                    isNewChild: false,
+                  },
+                ],
               }),
             },
           },
@@ -250,6 +271,11 @@ test('import -> analyze -> search -> user override rules', async () => {
     assert.equal(detailAfterAi.image.analysis_status, 'ready');
     assert.ok(detailAfterAi.activeCaption?.content.includes('设计参考图'));
     assert.ok(detailAfterAi.effectiveTags.length >= 1);
+    const treeAfterAi = app.listTagTree();
+    assert.ok(treeAfterAi.some((group) => group.name === '行业 / 用途' && group.children.some((tag) => tag.name === '海报')));
+    assert.ok(treeAfterAi.some((group) => group.name === '风格' && group.children.some((tag) => tag.name === '极简')));
+    assert.ok(treeAfterAi.some((group) => group.name === '构图 / 形式' && group.children.some((tag) => tag.name === '留白')));
+    assert.ok(!treeAfterAi.some((group) => group.name === '色彩'));
 
     const duplicateResult = await app.importFile(sourceFile);
     assert.equal(duplicateResult.status, 'duplicate');
@@ -286,6 +312,408 @@ test('import -> analyze -> search -> user override rules', async () => {
     const searchResult = await app.searchImages('品牌海报', ['品牌']);
     assert.ok(searchResult.total >= 1);
     assert.ok(searchResult.items.some((item) => item.id === imageId));
+  } finally {
+    await waitForQueueIdle(app);
+    app.close();
+  }
+});
+
+test('startup does not seed preset taxonomy into an empty database', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-preset-tags-empty-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const tree = app.listTagTree();
+    assert.ok(tree.every((group) => !PRESET_TAXONOMY.some((presetGroup) => presetGroup.name === group.name)));
+    assert.ok(tree.every((group) => (
+      !PRESET_TAXONOMY.some((presetGroup) => presetGroup.children.includes(group.name))
+    )));
+  } finally {
+    app.close();
+  }
+});
+
+test('startup cleans unused preset tags but preserves used preset tags', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-preset-cleanup-test-'));
+  const dbPath = path.join(root, 'data', 'inspiradb.sqlite');
+  const seedDb = new InspiraDatabase(dbPath);
+
+  try {
+    const imageInsert = seedDb.run(
+      `INSERT INTO images (
+        original_file_name,
+        source_path,
+        library_path,
+        thumbnail_path,
+        md5_hash,
+        file_size,
+        import_status,
+        analysis_status,
+        active_tag_source,
+        created_at,
+        updated_at
+      ) VALUES (
+        'used-preset.jpg',
+        '/tmp/used-preset.jpg',
+        '/tmp/used-preset.jpg',
+        '/tmp/used-preset.jpg.thumb',
+        'used-preset-hash',
+        100,
+        'imported',
+        'ready',
+        'ai',
+        '2026-03-18T10:00:00.000Z',
+        '2026-03-18T10:00:00.000Z'
+      )`,
+    );
+    const imageId = Number(imageInsert.lastInsertRowid);
+
+    seedDb.run(
+      `INSERT INTO tags (
+        name,
+        language,
+        parent_id,
+        level,
+        sort_order,
+        is_system,
+        created_at,
+        updated_at
+      ) VALUES (
+        '风格',
+        'zh',
+        NULL,
+        1,
+        0,
+        0,
+        '2026-03-18T10:00:00.000Z',
+        '2026-03-18T10:00:00.000Z'
+      )`,
+    );
+    const usedParentId = Number(seedDb.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '风格'
+       LIMIT 1`,
+    )?.id);
+
+    seedDb.run(
+      `INSERT INTO tags (
+        name,
+        language,
+        parent_id,
+        level,
+        sort_order,
+        is_system,
+        created_at,
+        updated_at
+      ) VALUES (
+        '极简',
+        'zh',
+        :parentId,
+        2,
+        0,
+        0,
+        '2026-03-18T10:00:00.000Z',
+        '2026-03-18T10:00:00.000Z'
+      )`,
+      { parentId: usedParentId },
+    );
+    const usedChildId = Number(seedDb.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '极简'
+       LIMIT 1`,
+    )?.id);
+
+    seedDb.run(
+      `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+       VALUES (:imageId, :tagId, 'ai', '2026-03-18T10:00:00.000Z')`,
+      { imageId, tagId: usedChildId },
+    );
+
+    const unusedParentGroup = PRESET_TAXONOMY.find((group) => group.name === '色彩');
+    seedDb.run(
+      `INSERT INTO tags (
+        name,
+        language,
+        parent_id,
+        level,
+        sort_order,
+        is_system,
+        created_at,
+        updated_at
+      ) VALUES (
+        :name,
+        'zh',
+        NULL,
+        1,
+        0,
+        0,
+        '2026-03-18T10:00:00.000Z',
+        '2026-03-18T10:00:00.000Z'
+      )`,
+      { name: unusedParentGroup.name },
+    );
+    const unusedParentId = Number(seedDb.get(
+      `SELECT id
+       FROM tags
+       WHERE name = :name
+       LIMIT 1`,
+      { name: unusedParentGroup.name },
+    )?.id);
+
+    seedDb.run(
+      `INSERT INTO tags (
+        name,
+        language,
+        parent_id,
+        level,
+        sort_order,
+        is_system,
+        created_at,
+        updated_at
+      ) VALUES (
+        '绿色',
+        'zh',
+        :parentId,
+        2,
+        0,
+        0,
+        '2026-03-18T10:00:00.000Z',
+        '2026-03-18T10:00:00.000Z'
+      )`,
+      { parentId: unusedParentId },
+    );
+  } finally {
+    seedDb.close();
+  }
+
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+  try {
+    const preservedParent = app.db.get(
+      `SELECT id, level
+       FROM tags
+       WHERE name = '风格'
+       LIMIT 1`,
+    );
+    assert.equal(preservedParent?.level, 1);
+
+    const preservedChild = app.db.get(
+      `SELECT id, level, parent_id
+       FROM tags
+       WHERE name = '极简'
+       LIMIT 1`,
+    );
+    assert.equal(preservedChild?.level, 2);
+    assert.equal(preservedChild?.parent_id, preservedParent.id);
+
+    const removedUnusedChild = app.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '绿色'
+       LIMIT 1`,
+    );
+    assert.equal(removedUnusedChild, undefined);
+
+    const removedUnusedParent = app.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '色彩'
+       LIMIT 1`,
+    );
+    assert.equal(removedUnusedParent, undefined);
+  } finally {
+    app.close();
+  }
+});
+
+test('ai analysis reuses existing taxonomy tags and creates missing child tags under an existing parent', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-ai-taxonomy-reuse-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: true });
+
+  try {
+    const presetParent = app.createTag({ name: '行业 / 用途', level: 1 });
+
+    const existingTag = app.createTag({
+      name: '便签板',
+      level: 2,
+      parentId: presetParent.id,
+    });
+
+    app.aiService.zhipuService.request = async (endpoint, payload = {}) => {
+      if (endpoint === '/embeddings') {
+        return {
+          data: [{ embedding: embedTextDeterministic(payload.input) }],
+        };
+      }
+
+      if (endpoint === '/chat/completions') {
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  caption: '这是一张桌面便签板设计参考图，包含木质展示板、照片和文具元素。',
+                  taxonomyTags: [
+                    {
+                      parentName: '行业 / 用途',
+                      childName: '便签板',
+                      isNewParent: false,
+                      isNewChild: false,
+                    },
+                    {
+                      parentName: '行业 / 用途',
+                      childName: '桌面摆件',
+                      isNewParent: false,
+                      isNewChild: true,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        };
+      }
+
+      throw new Error(`UNSUPPORTED_TEST_ENDPOINT:${endpoint}`);
+    };
+
+    const sourceFile = path.join(root, 'taxonomy-reuse.jpg');
+    fs.writeFileSync(sourceFile, Buffer.from('fake-jpg-content-taxonomy-reuse'));
+
+    const importResult = await app.importFile(sourceFile);
+    const imageId = importResult.image.id;
+    await waitForImageStatus(app, imageId, 'ready', 8000);
+
+    const detail = app.getImageDetail(imageId);
+    const aiTagNames = detail.aiSuggestedTags.map((tag) => tag.name).sort();
+    assert.deepEqual(aiTagNames, ['便签板', '桌面摆件'].sort());
+
+    const reusedTag = app.db.get(
+      `SELECT id, parent_id
+       FROM tags
+       WHERE name = '便签板'
+       LIMIT 1`,
+    );
+    assert.equal(reusedTag.id, existingTag.id);
+    assert.equal(reusedTag.parent_id, presetParent.id);
+
+    const createdTag = app.db.get(
+      `SELECT id, parent_id
+       FROM tags
+       WHERE name = '桌面摆件'
+       LIMIT 1`,
+    );
+    assert.ok(createdTag?.id);
+    assert.equal(createdTag.parent_id, presetParent.id);
+  } finally {
+    await waitForQueueIdle(app);
+    app.close();
+  }
+});
+
+test('ai analysis can create a new parent tag and falls back to uncategorized for invalid parent names', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-ai-taxonomy-create-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: true });
+
+  try {
+    let chatCallCount = 0;
+    app.aiService.zhipuService.request = async (endpoint, payload = {}) => {
+      if (endpoint === '/embeddings') {
+        return {
+          data: [{ embedding: embedTextDeterministic(payload.input) }],
+        };
+      }
+
+      if (endpoint === '/chat/completions') {
+        chatCallCount += 1;
+        const firstResponse = {
+          caption: '这是一张微观艺术主题的创意图像，主体呈现发光孢子与实验质感。',
+          taxonomyTags: [
+            {
+              parentName: '微观幻想',
+              childName: '发光孢子',
+              isNewParent: true,
+              isNewChild: true,
+            },
+            {
+              parentName: '微观幻想',
+              childName: '实验质感',
+              isNewParent: false,
+              isNewChild: true,
+            },
+          ],
+        };
+        const secondResponse = {
+          caption: '这是一张抽象创意图像，画面强调色块关系与视觉张力。',
+          taxonomyTags: [
+            {
+              parentName: '其他',
+              childName: '色块构成',
+              isNewParent: true,
+              isNewChild: true,
+            },
+          ],
+        };
+
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(chatCallCount === 1 ? firstResponse : secondResponse),
+              },
+            },
+          ],
+        };
+      }
+
+      throw new Error(`UNSUPPORTED_TEST_ENDPOINT:${endpoint}`);
+    };
+
+    const firstFile = path.join(root, 'taxonomy-create-parent.jpg');
+    fs.writeFileSync(firstFile, Buffer.from('fake-jpg-content-taxonomy-create-parent'));
+    const firstImport = await app.importFile(firstFile);
+    await waitForImageStatus(app, firstImport.image.id, 'ready', 8000);
+
+    const createdParent = app.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = '微观幻想'
+         AND level = 1
+       LIMIT 1`,
+    );
+    assert.ok(createdParent?.id);
+
+    const firstCreatedChild = app.db.get(
+      `SELECT parent_id
+       FROM tags
+       WHERE name = '发光孢子'
+       LIMIT 1`,
+    );
+    assert.equal(firstCreatedChild.parent_id, createdParent.id);
+
+    const secondFile = path.join(root, 'taxonomy-invalid-parent.jpg');
+    fs.writeFileSync(secondFile, Buffer.from('fake-jpg-content-taxonomy-invalid-parent'));
+    const secondImport = await app.importFile(secondFile);
+    await waitForImageStatus(app, secondImport.image.id, 'ready', 8000);
+
+    const uncategorized = app.db.get(
+      `SELECT id
+       FROM tags
+       WHERE name = :name
+         AND level = 1
+       LIMIT 1`,
+      { name: UNCATEGORIZED_TAG_NAME },
+    );
+    assert.ok(uncategorized?.id);
+
+    const fallbackChild = app.db.get(
+      `SELECT parent_id
+       FROM tags
+       WHERE name = '色块构成'
+       LIMIT 1`,
+    );
+    assert.equal(fallbackChild.parent_id, uncategorized.id);
   } finally {
     await waitForQueueIdle(app);
     app.close();
@@ -969,36 +1397,36 @@ test('searchImages applies AND/OR filtering across secondary tags', async () => 
   const app = createTestApp({ rootDir: root, autoStartQueue: false });
 
   try {
-    const themeGroup = app.createTag({ name: '主题', level: 1 });
-    const styleGroup = app.createTag({ name: '风格', level: 1 });
-    const brandTag = app.createTag({ name: '品牌', level: 2, parentId: themeGroup.id });
-    const posterTag = app.createTag({ name: '海报', level: 2, parentId: themeGroup.id });
-    const minimalTag = app.createTag({ name: '极简', level: 2, parentId: styleGroup.id });
+    const themeGroup = app.createTag({ name: '测试主题', level: 1 });
+    const styleGroup = app.createTag({ name: '测试风格', level: 1 });
+    const brandTag = app.createTag({ name: '品牌展示', level: 2, parentId: themeGroup.id });
+    const posterTag = app.createTag({ name: '促销海报', level: 2, parentId: themeGroup.id });
+    const minimalTag = app.createTag({ name: '留白极简', level: 2, parentId: styleGroup.id });
 
     const imageBrandMinimal = insertReadyImageWithTagIds(app, {
       fileName: 'brand-minimal.jpg',
       hash: 'filter-brand-minimal',
-      caption: '品牌海报采用极简留白布局。',
+      caption: '品牌展示海报采用留白极简布局。',
       tagIds: [brandTag.id, posterTag.id, minimalTag.id],
-      vector: embedTextDeterministic('品牌 海报 极简'),
+      vector: embedTextDeterministic('品牌展示 促销海报 留白极简'),
       updatedAt: '2026-03-18T12:00:00.000Z',
     });
 
     const imageBrandOnly = insertReadyImageWithTagIds(app, {
       fileName: 'brand-only.jpg',
       hash: 'filter-brand-only',
-      caption: '品牌视觉延展物料。',
+      caption: '品牌展示延展物料。',
       tagIds: [brandTag.id],
-      vector: embedTextDeterministic('品牌 视觉'),
+      vector: embedTextDeterministic('品牌展示 视觉'),
       updatedAt: '2026-03-18T11:00:00.000Z',
     });
 
     const imageMinimalOnly = insertReadyImageWithTagIds(app, {
       fileName: 'minimal-only.jpg',
       hash: 'filter-minimal-only',
-      caption: '极简风格的版式研究。',
+      caption: '留白极简风格的版式研究。',
       tagIds: [minimalTag.id],
-      vector: embedTextDeterministic('极简 版式'),
+      vector: embedTextDeterministic('留白极简 版式'),
       updatedAt: '2026-03-18T10:00:00.000Z',
     });
 
@@ -1015,7 +1443,17 @@ test('searchImages applies AND/OR filtering across secondary tags', async () => 
     const themeNode = tagTree.find((group) => group.id === themeGroup.id);
     const styleNode = tagTree.find((group) => group.id === styleGroup.id);
     assert.equal(themeNode.children.find((tag) => tag.id === brandTag.id).count, 2);
+    assert.equal(themeNode.children.find((tag) => tag.id === brandTag.id).usageCount, 2);
+    assert.equal(themeNode.usageCount, 3);
     assert.equal(styleNode.children.find((tag) => tag.id === minimalTag.id).count, 2);
+    assert.equal(styleNode.children.find((tag) => tag.id === minimalTag.id).usageCount, 2);
+
+    const emptyGroup = app.createTag({ name: '空分组', level: 1 });
+    const emptyTag = app.createTag({ name: '空二级标签', level: 2, parentId: emptyGroup.id });
+    const treeWithEmptyTag = await app.getFilterTags('', [emptyTag.id], 'or');
+    const emptyNode = treeWithEmptyTag.find((group) => group.id === emptyGroup.id);
+    assert.equal(emptyNode.children.find((tag) => tag.id === emptyTag.id).count, 0);
+    assert.equal(emptyNode.children.find((tag) => tag.id === emptyTag.id).usageCount, 0);
   } finally {
     app.close();
   }

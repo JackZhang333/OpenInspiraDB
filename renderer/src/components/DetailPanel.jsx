@@ -8,7 +8,6 @@ import {
   Plus,
   RotateCcw,
   Save,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -82,7 +81,7 @@ export function DetailPanel({
     );
   }
 
-  const { image, activeCaption, effectiveTags, aiSuggestedTags, latestJob } = detail;
+  const { image, activeCaption, effectiveTags, latestJob } = detail;
   const isFailed = image.analysis_status === 'failed';
   const isCopied = copiedImageId === image.id;
   const statusLabelMap = {
@@ -184,8 +183,6 @@ export function DetailPanel({
   };
 
   const selectedTagGroups = groupSelectedTags(tagTree, selectedTagIds);
-  const aiSuggestedIdSet = new Set((aiSuggestedTags || []).map((tag) => Number(tag.id)));
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto">
@@ -204,19 +201,8 @@ export function DetailPanel({
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="bg-moss/10 text-moss">
-              {statusLabelMap[image.analysis_status] || image.analysis_status}
-            </Badge>
-            {latestJob?.status ? (
-              <Badge className="bg-clay/15 text-ink/55">
-                最近任务: {latestJob.status}
-              </Badge>
-            ) : null}
-          </div>
-
           {isFailed ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
               <div className="flex items-start gap-2">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
@@ -229,22 +215,17 @@ export function DetailPanel({
             </div>
           ) : null}
 
-          <section className="space-y-3">
+          <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-moss" />
-                <h3 className="text-sm font-semibold text-ink">描述</h3>
-              </div>
-              {!isEditing && activeCaption?.source ? (
-                <span className="text-xs text-ink/35">来源：{activeCaption.source}</span>
-              ) : null}
+              <h3 className="text-xs font-medium text-ink/50">描述</h3>
+              <span className="text-[11px] text-ink/30">{activeCaption?.source || 'AI'}</span>
             </div>
             {isEditing ? (
               <div className="space-y-2">
                 <Textarea
                   value={caption}
                   onChange={(event) => setCaption(event.target.value)}
-                  className="min-h-[120px] resize-none"
+                  className="min-h-[100px] resize-none"
                   placeholder="输入图片描述..."
                 />
                 {localError ? (
@@ -252,18 +233,18 @@ export function DetailPanel({
                 ) : null}
               </div>
             ) : activeCaption?.content ? (
-              <div className="whitespace-pre-wrap rounded-2xl border border-clay/10 bg-white/80 px-4 py-3 text-sm leading-6 text-ink/80">
+              <div className="whitespace-pre-wrap rounded-xl border border-clay/10 bg-white/80 px-3.5 py-2.5 text-sm leading-5 text-ink/75">
                 {activeCaption.content}
               </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-clay/20 px-4 py-3 text-sm text-ink/35">
+              <div className="rounded-xl border border-dashed border-clay/20 px-3.5 py-2.5 text-sm text-ink/30">
                 暂无描述
               </div>
             )}
           </section>
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-ink">标签</h3>
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-ink/50">标签</h3>
 
             {isEditing ? (
               <div className="space-y-4">
@@ -331,7 +312,6 @@ export function DetailPanel({
                       <div className="flex flex-wrap gap-2">
                         {(group.children || []).map((tag) => {
                           const isSelected = selectedTagIds.includes(Number(tag.id));
-                          const isAiSuggested = aiSuggestedIdSet.has(Number(tag.id));
                           return (
                             <button
                               key={tag.id}
@@ -341,9 +321,7 @@ export function DetailPanel({
                                 'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition',
                                 isSelected
                                   ? 'border-moss bg-moss text-white'
-                                  : isAiSuggested
-                                    ? 'border-moss/30 bg-moss/5 text-moss hover:bg-moss/10'
-                                    : 'border-clay/20 bg-white text-ink/70 hover:bg-clay/10',
+                                  : 'border-clay/20 bg-white text-ink/70 hover:bg-clay/10',
                               )}
                             >
                               {isSelected ? <Check className="h-3 w-3" /> : null}
@@ -359,47 +337,25 @@ export function DetailPanel({
             ) : (
               <>
                 {effectiveTags?.length ? (
-                  <div className="space-y-2">
-                    {groupSelectedTags(tagTree, (effectiveTags || []).map((tag) => Number(tag.id))).map((group) => (
-                      <div key={group.id}>
-                        <div className="mb-1 text-xs text-ink/35">{group.name}</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {group.children.map((tag) => (
-                            <Badge key={tag.id}>{tag.name}</Badge>
-                          ))}
-                        </div>
-                      </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {effectiveTags.map((tag) => (
+                      <Badge key={tag.id} variant="secondary" className="bg-clay/10 text-ink/60">
+                        {tag.name}
+                      </Badge>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-xs text-ink/35">暂无标签</div>
+                  <div className="text-xs text-ink/30">暂无标签</div>
                 )}
-
-                {aiSuggestedTags?.length ? (
-                  <div className="space-y-2">
-                    <div className="text-xs text-ink/35">AI 推荐标签</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {aiSuggestedTags.map((tag) => (
-                        <Badge key={tag.id} className="bg-clay/10 text-ink/55">
-                          {tag.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </>
             )}
           </section>
 
-          <section className="space-y-3 rounded-2xl border border-clay/10 bg-white/70 p-4">
-            <h3 className="text-sm font-semibold text-ink">文件信息</h3>
-            <MetadataRow label="原始名称" value={image.original_file_name} />
-            <MetadataRow label="文件体积" value={`${(image.file_size / 1024 / 1024).toFixed(2)} MB`} />
-            <MetadataRow label="分析状态" value={statusLabelMap[image.analysis_status] || image.analysis_status} />
-            <MetadataRow
-              label="更新时间"
-              value={image.updated_at ? new Date(image.updated_at).toLocaleString('zh-CN') : '-'}
-            />
+          <section className="space-y-2 rounded-xl border border-clay/10 bg-white/60 px-3 py-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-ink/40">{image.original_file_name}</span>
+              <span className="text-ink/30">{(image.file_size / 1024 / 1024).toFixed(2)} MB</span>
+            </div>
           </section>
         </div>
       </div>

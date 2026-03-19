@@ -2,11 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { nowIso } from '../core/database.js';
+import {
+  listTagTree,
+  PRESET_PARENT_TAGS,
+  PRESET_TAXONOMY,
+  UNCATEGORIZED_TAG_NAME,
+} from '../core/tag-store.js';
 import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { buildEmbeddingText, getEffectiveTagNames } from '../utils/embedding.js';
-import { uniqueNonEmptyTags } from '../utils/text.js';
+import { normalizeTagName, uniqueNonEmptyTags } from '../utils/text.js';
 import { normalizeVector } from '../utils/vector.js';
 import { saveAiTags, upsertEmbedding } from './ai-persistence.js';
+
+const MAX_CUSTOM_PARENT_COUNT = 10;
+const MAX_CUSTOM_CHILDREN_PER_PARENT = 16;
 
 function toMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
@@ -65,17 +74,82 @@ function buildFallbackTags(fileName) {
   return uniqueNonEmptyTags(['设计参考', '视觉灵感', ...parts]).slice(0, 8);
 }
 
+function buildFallbackTaxonomyTags(fileName) {
+  return buildFallbackTags(fileName).map((tagName) => ({
+    parentName: UNCATEGORIZED_TAG_NAME,
+    childName: tagName,
+    isNewParent: false,
+    isNewChild: true,
+  }));
+}
+
+function normalizeTaxonomyTags(items) {
+  const seen = new Set();
+  const output = [];
+
+  for (const rawItem of Array.isArray(items) ? items : []) {
+    const childName = normalizeTagName(String(rawItem?.childName || ''));
+    if (!childName || seen.has(childName)) {
+      continue;
+    }
+
+    seen.add(childName);
+    output.push({
+      parentName: normalizeTagName(String(rawItem?.parentName || '')),
+      childName,
+      isNewParent: Boolean(rawItem?.isNewParent),
+      isNewChild: Boolean(rawItem?.isNewChild),
+    });
+  }
+
+  return output.slice(0, 8);
+}
+
+function buildTaxonomyContext(db) {
+  const customGroups = listTagTree(db)
+    .filter((parent) => !PRESET_PARENT_TAGS.includes(parent.name) && parent.name !== UNCATEGORIZED_TAG_NAME)
+    .slice(0, MAX_CUSTOM_PARENT_COUNT)
+    .map((parent) => {
+      const childNames = parent.children
+        .slice(0, MAX_CUSTOM_CHILDREN_PER_PARENT)
+        .map((child) => child.name);
+
+      return `${parent.name}：${childNames.length ? childNames.join('、') : '暂无二级标签'}`;
+    });
+
+  const presetGroups = PRESET_TAXONOMY.map((group) => `${group.name}：${group.children.join('、')}`);
+
+  return [
+    '请优先按以下系统预设分类标准归类：',
+    ...presetGroups,
+    customGroups.length ? '当前标签库中还存在以下扩展分类，可在合适时复用：' : '',
+    ...customGroups,
+    `如果以上都没有合适项，可新增一级分类或二级标签；兜底一级分类为「${UNCATEGORIZED_TAG_NAME}」。`,
+    '同一个二级标签名在系统中全局唯一，不要为不同一级分类重复创造同名标签。',
+  ].filter(Boolean).join('\n');
+}
+
 function parseAnalysisPayload(rawText, image) {
   const cleanText = stripCodeFence(rawText);
 
   try {
     const parsed = JSON.parse(cleanText);
     const caption = String(parsed.caption || '').trim();
+    const taxonomyTags = normalizeTaxonomyTags(parsed.taxonomyTags);
     const tags = uniqueNonEmptyTags(Array.isArray(parsed.tags) ? parsed.tags : []);
     if (caption) {
       return {
         caption,
-        tags: tags.length ? tags.slice(0, 8) : buildFallbackTags(image.original_file_name),
+        taxonomyTags: taxonomyTags.length
+          ? taxonomyTags
+          : tags.length
+            ? tags.slice(0, 8).map((tagName) => ({
+              parentName: UNCATEGORIZED_TAG_NAME,
+              childName: tagName,
+              isNewParent: false,
+              isNewChild: true,
+            }))
+            : buildFallbackTaxonomyTags(image.original_file_name),
       };
     }
   } catch {
@@ -84,7 +158,7 @@ function parseAnalysisPayload(rawText, image) {
 
   return {
     caption: cleanText || `这是一张与「${image.original_file_name}」相关的设计参考图。`,
-    tags: buildFallbackTags(image.original_file_name),
+    taxonomyTags: buildFallbackTaxonomyTags(image.original_file_name),
   };
 }
 
@@ -169,19 +243,20 @@ export class ZhipuAiService {
 
     const imageDataUrl = fileToDataUrl(image.library_path);
     const settings = this.getSettings();
+    const taxonomyContext = buildTaxonomyContext(this.db);
     const response = await this.request('/chat/completions', {
       model: settings.visionModel,
       messages: [
         {
           role: 'system',
-          content: '你是设计素材库分析助手。请仅输出 JSON 对象，格式为 {"caption":"...","tags":["..."]}。caption 使用简体中文，30到90字；tags 返回4到8个中文短标签；不要输出 markdown 或额外解释。',
+          content: '你是设计素材库分析助手。请仅输出 JSON 对象，格式为 {"caption":"...","taxonomyTags":[{"parentName":"...","childName":"...","isNewParent":false,"isNewChild":false}]}。caption 使用简体中文，30到90字；taxonomyTags 返回4到8个中文短标签；优先复用系统预设分类和现有标签，只有没有合适项时才允许新增；最多新增1个一级分类、最多新增4个二级标签；不要输出 markdown 或额外解释。',
         },
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: '请分析这张设计参考图的主要内容、风格和可检索要点。',
+              text: `请分析这张设计参考图的主要内容、风格和可检索要点，并根据现有标签体系给出一级分类与二级标签建议。\n\n${taxonomyContext}`,
             },
             {
               type: 'image_url',
@@ -197,7 +272,7 @@ export class ZhipuAiService {
     });
 
     const rawContent = extractMessageText(response?.choices?.[0]?.message?.content);
-    const { caption: aiCaption, tags: aiTags } = parseAnalysisPayload(rawContent, image);
+    const { caption: aiCaption, taxonomyTags } = parseAnalysisPayload(rawContent, image);
 
     this.db.transaction(() => {
       const now = nowIso();
@@ -262,7 +337,7 @@ export class ZhipuAiService {
         );
       }
 
-      saveAiTags(this.db, imageId, aiTags);
+      saveAiTags(this.db, imageId, { taxonomyTags });
       this.db.run(
         `UPDATE images
          SET analysis_status = 'ready',

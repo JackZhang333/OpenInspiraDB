@@ -21,6 +21,7 @@ import {
   Save,
 } from 'lucide-react';
 import { cn } from '../lib/utils.js';
+import { filterSidebarTagTree } from '../lib/tag-tree.js';
 import { Button } from './ui/button.jsx';
 import { Input } from './ui/input.jsx';
 
@@ -423,7 +424,7 @@ export function TagSettingsDialog({
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
           <div className="mb-6 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-white/80 p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">Primary Category</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">一级标签</div>
             <div className="flex flex-col gap-3 md:flex-row">
               <Input
                 value={newParentName}
@@ -437,7 +438,7 @@ export function TagSettingsDialog({
                 onClick={handleAddParent}
               >
                 <Plus className="mr-1.5 h-4 w-4" />
-                一级标签
+                添加一级
               </Button>
             </div>
           </div>
@@ -614,6 +615,10 @@ export function AppSidebar({
   const expandedSet = React.useMemo(
     () => new Set((expandedParentTagIds || []).map((id) => Number(id))),
     [expandedParentTagIds],
+  );
+  const visibleTags = React.useMemo(
+    () => filterSidebarTagTree(availableTags, selectedTagIds),
+    [availableTags, selectedTagIds],
   );
   const progress = getImportProgressSnapshot(importing, importProgress);
   const total = Number(importProgress?.total || 0);
@@ -824,13 +829,13 @@ export function AppSidebar({
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
-              {availableTags.length === 0 ? (
+              {visibleTags.length === 0 ? (
                 <div className="px-3 py-4 text-center text-[12px] text-ink/30">
                   暂无标签
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {availableTags.map((group) => {
+                  {visibleTags.map((group) => {
                     const isExpanded = expandedSet.has(Number(group.id));
                     return (
                       <div key={group.id} className="overflow-hidden rounded-xl border border-clay/10 bg-white/80">
