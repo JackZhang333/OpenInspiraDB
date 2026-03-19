@@ -578,9 +578,17 @@ export function listEffectiveTagNames(db, imageId) {
 
 export function listTagTree(db, countByTagId = new Map()) {
   const usageCountRows = db.all(
-    `SELECT tag_id, COUNT(*) AS total
-     FROM image_tags
-     GROUP BY tag_id`,
+    `SELECT it.tag_id, COUNT(*) AS total
+     FROM image_tags it
+     JOIN images i ON i.id = it.image_id
+     JOIN tags t ON t.id = it.tag_id
+     WHERE t.level = :level
+       AND (
+         (i.active_tag_source = 'user' AND it.source = 'user')
+         OR (i.active_tag_source = 'ai' AND it.source = 'ai')
+       )
+     GROUP BY it.tag_id`,
+    { level: TAG_LEVEL_CHILD },
   );
   const usageCountByTagId = new Map(
     usageCountRows.map((row) => [Number(row.tag_id), Number(row.total || 0)]),
@@ -597,6 +605,7 @@ export function listTagTree(db, countByTagId = new Map()) {
      FROM tags t
      LEFT JOIN tags p ON p.id = t.parent_id
      ORDER BY CASE WHEN t.level = :parentLevel THEN 0 ELSE 1 END ASC,
+              t.is_system ASC,
               COALESCE(p.sort_order, t.sort_order, 0) ASC,
               COALESCE(p.name, t.name, '') ASC,
               t.sort_order ASC,

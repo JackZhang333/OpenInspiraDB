@@ -38,7 +38,12 @@ function fileToDataUrl(filePath) {
   return `data:${toMimeType(filePath)};base64,${base64}`;
 }
 
-function extractMessageText(content) {
+function extractMessageText(content, reasoningContent) {
+  // GLM-4.5 系列模型将推理内容放在 reasoning_content 中
+  if (typeof reasoningContent === 'string' && reasoningContent.trim()) {
+    return reasoningContent.trim();
+  }
+
   if (typeof content === 'string') {
     return content;
   }
@@ -171,27 +176,27 @@ function buildTagOrganizationContext(db) {
   const groups = listTagTree(db);
   const groupLines = groups.map((group) => {
     const childText = (group.children || []).length
-      ? group.children.map((child) => `${child.name}(${Number(child.usageCount || 0)})`).join('、')
+      ? group.children.map((child) => `${child.name}[id:${child.id},count:${Number(child.usageCount || 0)}]`).join('、')
       : '暂无二级标签';
-    return `${group.name}：${childText}`;
+    return `${group.name}[id:${group.id}]：${childText}`;
   });
 
   const lowUsageTags = groups
     .flatMap((group) => (group.children || [])
       .filter((child) => Number(child.usageCount || 0) <= 5)
-      .map((child) => `${child.name}(${Number(child.usageCount || 0)})`))
+      .map((child) => ({ name: child.name, id: child.id, count: Number(child.usageCount || 0) })))
     .slice(0, 80);
 
   const presetGroups = PRESET_TAXONOMY.map((group) => `${group.name}：${group.children.join('、')}`);
 
   return [
-    '当前数据库真实标签如下：',
+    '当前数据库真实标签如下（格式：标签名[id:数字ID,count:使用次数]）：',
     ...(groupLines.length ? groupLines : ['暂无已落库标签']),
     '',
     '隐藏预设词库如下（可复用，也允许在不合适时造新词）：',
     ...presetGroups,
     '',
-    lowUsageTags.length ? `低使用标签（使用次数 <= 5）：${lowUsageTags.join('、')}` : '当前没有低使用标签。',
+    lowUsageTags.length ? `低使用标签（<=5次）：${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join('、')}` : '当前没有低使用标签。',
   ].join('\n');
 }
 
@@ -204,6 +209,14 @@ function parseTagOrganizationPayload(rawText) {
   } catch {
     return [];
   }
+}
+
+function truncateLogText(value, maxLength = 6000) {
+  const text = String(value || '');
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...[truncated]`;
 }
 
 export class ZhipuAiService {
@@ -220,6 +233,7 @@ export class ZhipuAiService {
       apiBase: String(zhipuConfig.apiBase || '').trim(),
       apiKey: String(zhipuConfig.apiKey || '').trim(),
       visionModel: String(zhipuConfig.visionModel || '').trim(),
+      reasoningModel: String(zhipuConfig.reasoningModel || zhipuConfig.visionModel || '').trim(),
       embeddingModel: String(zhipuConfig.embeddingModel || '').trim(),
       embeddingDimensions: Number(zhipuConfig.embeddingDimensions),
     };
@@ -315,7 +329,8 @@ export class ZhipuAiService {
       max_tokens: 500,
     });
 
-    const rawContent = extractMessageText(response?.choices?.[0]?.message?.content);
+    const message = response?.choices?.[0]?.message;
+    const rawContent = extractMessageText(message?.content, message?.reasoning_content);
     const { caption: aiCaption, taxonomyTags } = parseAnalysisPayload(rawContent, image);
 
     this.db.transaction(() => {
@@ -424,24 +439,32 @@ export class ZhipuAiService {
   async previewTagOrganization() {
     const settings = this.getSettings();
     const context = buildTagOrganizationContext(this.db);
+    const imageCount = this.db.get('SELECT COUNT(*) AS total FROM images')?.total || 0;
+    const deleteStrategy = imageCount < 100
+      ? '【当前图片较少】只删除使用次数为0的二级标签，保留所有使用次数>=1的标签'
+      : '【当前图片较多】可以删除使用次数<=5的低频标签';
     const response = await this.request('/chat/completions', {
-      model: settings.visionModel,
+      model: settings.reasoningModel || settings.visionModel,
       messages: [
         {
           role: 'system',
-          content: `你是图片标签治理助手。请仅输出 JSON 对象，格式为 {"operations":[...]}。可用操作只有 create、rename、merge、move、delete。
-create 形如 {"kind":"create","level":2,"name":"新标签","parentName":"一级分类","source":"generated","reason":"..."}；
-rename 形如 {"kind":"rename","tagId":12,"nextName":"极简","reason":"..."}；
-merge 形如 {"kind":"merge","sourceTagId":18,"targetTagName":"极简","targetParentName":"风格","source":"existing","reason":"..."}；
-move 形如 {"kind":"move","tagId":28,"targetParentName":"行业 / 用途","reason":"..."}；
-delete 形如 {"kind":"delete","tagId":33,"reason":"..."}。
-规则：
-1. 优先复用已有标签，其次复用预设词库，最后才允许造新词。
-2. 遇到近义词直接统一，不要为相近概念保留多个标签。
-3. 使用次数 <= 5 的标签优先考虑合并或删除。
-4. 允许造新词，但必须是中文短标签或必要的简短行业术语；不要输出泛词。
-5. 最多新增 ${MAX_ORGANIZATION_NEW_PARENT_COUNT} 个一级标签、最多新增 ${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签。
-6. 不要输出 markdown，不要输出解释性段落，只输出 JSON。`,
+          content: `你是图片标签治理助手。请直接输出 JSON 对象，格式为 {"operations":[...]}，不要有任何推理过程或解释文字。
+
+可用操作类型：
+- create: {"kind":"create","level":2,"name":"新标签","parentName":"一级分类","source":"generated","reason":"..."}
+- rename: {"kind":"rename","tagId":12,"nextName":"极简","reason":"..."}
+- merge: {"kind":"merge","sourceTagId":18,"targetTagName":"极简","targetParentName":"风格","source":"existing","reason":"..."}
+- move: {"kind":"move","tagId":28,"targetParentName":"行业 / 用途","reason":"..."}
+- delete: {"kind":"delete","tagId":33,"reason":"..."}
+
+整理规则（重要）：
+1. 【禁止删除一级分类】只能删除二级标签
+2. 【禁止动"未分组"分类】"未分组"下的标签不要删除，也不要移动
+3. ${deleteStrategy}
+4. 优先复用已有标签，其次复用预设词库，最后才允许造新词
+5. 遇到近义词直接统一，不要保留多个相似标签
+6. 最多新增 ${MAX_ORGANIZATION_NEW_PARENT_COUNT} 个一级标签、最多新增 ${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签
+7. 必须直接输出 JSON，禁止输出 markdown 或解释性文字`,
         },
         {
           role: 'user',
@@ -449,11 +472,30 @@ delete 形如 {"kind":"delete","tagId":33,"reason":"..."}。
         },
       ],
       temperature: 0.2,
-      max_tokens: 1200,
+      max_tokens: 2000,
     });
 
-    const rawContent = extractMessageText(response?.choices?.[0]?.message?.content);
-    return parseTagOrganizationPayload(rawContent);
+    const message = response?.choices?.[0]?.message;
+    const rawContent = extractMessageText(message?.content, message?.reasoning_content);
+    const operations = parseTagOrganizationPayload(rawContent);
+
+    this.logger.info('zhipu-tag-organization-preview-generated', {
+      model: settings.reasoningModel || settings.visionModel,
+      operationCount: operations.length,
+      operations,
+      rawContent: truncateLogText(rawContent),
+      fullResponse: JSON.stringify(response),
+    });
+
+    if (!operations.length) {
+      this.logger.error('zhipu-tag-organization-preview-empty', {
+        model: settings.reasoningModel || settings.visionModel,
+        rawContent: truncateLogText(rawContent),
+        responseChoices: JSON.stringify(response?.choices),
+      });
+    }
+
+    return operations;
   }
 
   async refreshEmbedding(imageId) {

@@ -124,6 +124,30 @@ function buildInClauseParams(prefix, values) {
   };
 }
 
+function fingerprintOrganizationOperation(operation = {}) {
+  if (operation.kind === 'create') {
+    return `create:${operation.level}:${operation.name}:${operation.parentName || ''}`;
+  }
+  if (operation.kind === 'rename') {
+    return `rename:${operation.tagId}:${operation.nextName}`;
+  }
+  if (operation.kind === 'merge') {
+    return `merge:${operation.sourceTagId}:${operation.targetTagName}:${operation.targetParentName || ''}`;
+  }
+  if (operation.kind === 'move') {
+    return `move:${operation.tagId}:${operation.targetParentName || ''}`;
+  }
+  if (operation.kind === 'delete') {
+    return `delete:${operation.tagId}`;
+  }
+  return JSON.stringify(operation);
+}
+
+function diffOrganizationOperations(before = [], after = []) {
+  const afterFingerprints = new Set(after.map((operation) => fingerprintOrganizationOperation(operation)));
+  return before.filter((operation) => !afterFingerprints.has(fingerprintOrganizationOperation(operation)));
+}
+
 function normalizeSelectedTagIds(db, selectedTagIds = []) {
   const normalizedIds = normalizeTagIds(selectedTagIds);
   if (normalizedIds.length > 0) {
@@ -511,12 +535,14 @@ export class InspiraDBApp {
     const flatTags = flattenTagTree(tagTree);
     const tagById = new Map(flatTags.map((tag) => [Number(tag.id), tag]));
     const tagByName = new Map(flatTags.map((tag) => [String(tag.name), tag]));
+    const imageCount = this.getImageCount();
 
     return {
       tagTree,
       flatTags,
       tagById,
       tagByName,
+      imageCount,
       lowUsageTagCount: flatTags.filter(
         (tag) => tag.level === TAG_LEVEL_CHILD && Number(tag.usageCount || 0) <= TAG_ORGANIZATION_LOW_USAGE_THRESHOLD,
       ).length,
@@ -668,6 +694,34 @@ export class InspiraDBApp {
         if (!current || current.isSystem) {
           continue;
         }
+        // 禁止删除一级分类，只允许删除二级标签
+        if (current.level === TAG_LEVEL_PARENT) {
+          continue;
+        }
+        // 细腻化的删除策略：结合图片数量和标签使用率
+        const usageCount = Number(current.usageCount || 0);
+        const imageCount = snapshot.imageCount || 0;
+        const totalTags = snapshot.flatTags.filter(t => t.level === TAG_LEVEL_CHILD).length;
+        const avgTagsPerImage = imageCount > 0 ? totalTags / imageCount : 0;
+
+        // 计算删除阈值：
+        // - 图片少(<50)且标签多(>人均3个)：只删0次
+        // - 图片中等(50-200)：删<=2次
+        // - 图片多(>200)：删<=5次
+        let deleteThreshold = 0;
+        if (imageCount < 50 && avgTagsPerImage > 3) {
+          deleteThreshold = 0; // 保守策略
+        } else if (imageCount < 100) {
+          deleteThreshold = 1; // 轻度清理
+        } else if (imageCount < 200) {
+          deleteThreshold = 2; // 中度清理
+        } else {
+          deleteThreshold = 5; // 积极清理
+        }
+
+        if (usageCount > deleteThreshold) {
+          continue;
+        }
         operations.push(operation);
       }
     }
@@ -728,9 +782,31 @@ export class InspiraDBApp {
   async previewTagOrganization() {
     const snapshot = this.buildTagOrganizationSnapshot();
     const rawOperations = await this.aiService.previewTagOrganization();
-    const operations = this.sanitizeTagOrganizationOperations(rawOperations, snapshot);
+    const normalizedOperations = normalizeOrganizationOperations(rawOperations);
+    const operations = this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot);
+    const droppedOperations = diffOrganizationOperations(normalizedOperations, operations);
     const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
     const summary = summarizeOrganizationOperations(operations);
+
+    this.logger.info('tag-organization-preview-sanitized', {
+      rawOperationCount: Array.isArray(rawOperations) ? rawOperations.length : 0,
+      normalizedOperationCount: normalizedOperations.length,
+      sanitizedOperationCount: operations.length,
+      droppedOperationCount: droppedOperations.length,
+      normalizedOperations,
+      droppedOperations,
+      sanitizedOperations: operations,
+      affectedImageCount: affectedImageIds.length,
+    });
+
+    if (!operations.length) {
+      this.logger.error('tag-organization-preview-no-effective-operations', {
+        rawOperationCount: Array.isArray(rawOperations) ? rawOperations.length : 0,
+        normalizedOperationCount: normalizedOperations.length,
+        droppedOperationCount: droppedOperations.length,
+        droppedOperations,
+      });
+    }
 
     return {
       generatedAt: nowIso(),
@@ -986,46 +1062,56 @@ export class InspiraDBApp {
       throw error;
     }
 
+    const now = nowIso();
+
     if (tag.level === TAG_LEVEL_PARENT) {
-      const child = this.db.get(
+      const childRows = this.db.all(
         `SELECT id
          FROM tags
-         WHERE parent_id = :tagId
-         LIMIT 1`,
+         WHERE parent_id = :tagId`,
         { tagId },
       );
+      const childTagIds = childRows.map((row) => Number(row.id)).filter((value) => Number.isInteger(value) && value > 0);
+      const affectedImageIds = this.collectImageIdsByTagIds(childTagIds);
 
-      if (child) {
-        const error = new Error('TAG_HAS_CHILDREN');
-        error.code = 'TAG_HAS_CHILDREN';
-        throw error;
-      }
+      this.db.transaction(() => {
+        if (childTagIds.length) {
+          const { clause, params } = buildInClauseParams('tag', childTagIds);
+          this.db.run(
+            `DELETE FROM image_tags
+             WHERE tag_id IN (${clause})`,
+            params,
+          );
+          this.db.run(
+            `DELETE FROM tags
+             WHERE id IN (${clause})`,
+            params,
+          );
+        }
 
-      this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
+        this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
+        this.markImagesForEmbeddingRefresh(affectedImageIds, now);
+      });
+
       return {
         deleted: true,
         tagId,
+        affectedImageCount: affectedImageIds.length,
       };
     }
 
-    const usageRow = this.db.get(
-      `SELECT COUNT(*) AS total
-       FROM image_tags
-       WHERE tag_id = :tagId`,
-      { tagId },
-    );
+    const affectedImageIds = this.collectImageIdsByTagIds([tag.id]);
 
-    if (Number(usageRow?.total || 0) > 0) {
-      const error = new Error('TAG_IN_USE');
-      error.code = 'TAG_IN_USE';
-      error.usageCount = Number(usageRow.total);
-      throw error;
-    }
+    this.db.transaction(() => {
+      this.db.run('DELETE FROM image_tags WHERE tag_id = :tagId', { tagId });
+      this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
+      this.markImagesForEmbeddingRefresh(affectedImageIds, now);
+    });
 
-    this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId });
     return {
       deleted: true,
       tagId,
+      affectedImageCount: affectedImageIds.length,
     };
   }
 
@@ -1047,10 +1133,28 @@ export class InspiraDBApp {
          WHERE id = :tagId`,
         {
           tagId: Number(row.id),
-          updatedAt,
         },
       );
     }
+  }
+
+  collectImageIdsByTagIds(tagIds = []) {
+    const normalizedTagIds = normalizeTagIds(tagIds);
+    if (!normalizedTagIds.length) {
+      return [];
+    }
+
+    const { clause, params } = buildInClauseParams('tag', normalizedTagIds);
+    const rows = this.db.all(
+      `SELECT DISTINCT image_id
+       FROM image_tags
+       WHERE tag_id IN (${clause})`,
+      params,
+    );
+
+    return rows
+      .map((row) => Number(row.image_id))
+      .filter((value) => Number.isInteger(value) && value > 0);
   }
 
   markImagesForEmbeddingRefresh(imageIds = [], updatedAt = nowIso()) {
@@ -1300,11 +1404,24 @@ export class InspiraDBApp {
   applyTagOrganizationPlan(payload = {}) {
     const inputOperations = Array.isArray(payload) ? payload : payload.operations;
     const snapshot = this.buildTagOrganizationSnapshot();
-    const operations = this.sanitizeTagOrganizationOperations(inputOperations, snapshot);
+    const normalizedOperations = normalizeOrganizationOperations(inputOperations);
+    const operations = this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot);
+    const droppedOperations = diffOrganizationOperations(normalizedOperations, operations);
     const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
     const appliedOperations = [];
     const skippedOperations = [];
     const now = nowIso();
+
+    this.logger.info('tag-organization-apply-started', {
+      inputOperationCount: Array.isArray(inputOperations) ? inputOperations.length : 0,
+      normalizedOperationCount: normalizedOperations.length,
+      sanitizedOperationCount: operations.length,
+      droppedOperationCount: droppedOperations.length,
+      normalizedOperations,
+      droppedOperations,
+      sanitizedOperations: operations,
+      affectedImageCount: affectedImageIds.length,
+    });
 
     this.db.transaction(() => {
       for (const operation of operations) {
@@ -1335,6 +1452,14 @@ export class InspiraDBApp {
       if (appliedOperations.length) {
         setAppSetting(this.db, 'last_tag_organization_at', now, now);
       }
+    });
+
+    this.logger.info('tag-organization-apply-finished', {
+      appliedCount: appliedOperations.length,
+      skippedCount: skippedOperations.length,
+      appliedOperations,
+      skippedOperations,
+      affectedImageCount: affectedImageIds.length,
     });
 
     return {

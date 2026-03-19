@@ -162,11 +162,13 @@ function cloneTagTreeToDraft(tagTree = []) {
     id: group.id,
     name: group.name,
     isSystem: Boolean(group.isSystem),
+    usageCount: Number(group.usageCount || 0),
     children: (group.children || []).map((tag) => ({
       id: tag.id,
       name: tag.name,
       parentId: group.id,
       isSystem: Boolean(tag.isSystem),
+      usageCount: Number(tag.usageCount || 0),
     })),
     pendingChildName: '',
   }));
@@ -220,6 +222,14 @@ function renderOrganizationOperationTitle(operation) {
   return `删除「${operation.currentName || operation.tagId}」`;
 }
 
+function confirmTagDeletion(message) {
+  if (typeof window?.confirm === 'function') {
+    return window.confirm(message);
+  }
+
+  return true;
+}
+
 export function TagSettingsDialog({
   open,
   saving,
@@ -270,11 +280,7 @@ export function TagSettingsDialog({
       .catch(() => {});
   }, [open]);
 
-  if (!open) {
-    return null;
-  }
-
-  const groupedOrganizationOperations = React.useMemo(() => {
+  const groupedOrganizationOperations = (() => {
     const groups = new Map();
     for (const operation of organizationPreview?.operations || []) {
       const bucket = groups.get(operation.kind) || [];
@@ -282,7 +288,11 @@ export function TagSettingsDialog({
       groups.set(operation.kind, bucket);
     }
     return Array.from(groups.entries());
-  }, [organizationPreview]);
+  })();
+
+  if (!open) {
+    return null;
+  }
 
   const updateGroup = (groupId, updater) => {
     setDraftGroups((currentGroups) => currentGroups.map((group) => (
@@ -306,7 +316,18 @@ export function TagSettingsDialog({
   };
 
   const handleRemoveParent = (groupId) => {
-    setDraftGroups((currentGroups) => currentGroups.filter((group) => String(group.id) !== String(groupId)));
+    const group = draftGroups.find((item) => String(item.id) === String(groupId));
+    const usageCount = Number(group?.usageCount || 0);
+    if (usageCount > 0) {
+      const confirmed = confirmTagDeletion(
+        `一级分类「${group.name}」下当前还有 ${usageCount} 个生效图片标签关联，删除后会同时删除其下二级标签及关联。确定继续吗？`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setDraftGroups((currentGroups) => currentGroups.filter((item) => String(item.id) !== String(groupId)));
   };
 
   const handleAddChild = (groupId) => {
@@ -332,6 +353,18 @@ export function TagSettingsDialog({
   };
 
   const handleRemoveChild = (groupId, childId) => {
+    const group = draftGroups.find((item) => String(item.id) === String(groupId));
+    const child = group?.children.find((item) => String(item.id) === String(childId));
+    const usageCount = Number(child?.usageCount || 0);
+    if (usageCount > 0) {
+      const confirmed = confirmTagDeletion(
+        `二级标签「${child.name}」当前还有 ${usageCount} 个生效图片标签关联，删除后会同步移除这些图片上的该标签。确定继续吗？`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     updateGroup(groupId, (currentGroup) => ({
       ...currentGroup,
       children: currentGroup.children.filter((child) => String(child.id) !== String(childId)),
@@ -580,23 +613,6 @@ export function TagSettingsDialog({
         </div>
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
-          <div className="mb-6 rounded-[24px] border border-moss/10 bg-white/85 p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-ink">AI 整理节奏</div>
-                <div className="mt-1 text-sm text-ink/50">{formatOrganizationCadence(organizationStatus)}</div>
-              </div>
-              <div className={cn(
-                'rounded-full px-3 py-1 text-xs font-semibold',
-                organizationStatus?.recommended
-                  ? 'bg-amber-100 text-amber-700'
-                  : 'bg-moss/10 text-moss',
-              )}>
-                {organizationStatus?.recommended ? '建议整理' : '状态稳定'}
-              </div>
-            </div>
-          </div>
-
           {organizationPreview ? (
             <div className="mb-6 rounded-[24px] border border-moss/15 bg-white/90 p-5 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -619,23 +635,23 @@ export function TagSettingsDialog({
                 {groupedOrganizationOperations.map(([kind, operations]) => (
                   <div key={kind} className="rounded-[20px] bg-[#f4f8ef] p-4">
                     <div className="mb-3 text-sm font-semibold text-ink">{ORGANIZATION_GROUP_LABELS[kind]}</div>
-                    <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
                       {operations.map((operation) => (
-                        <div key={operation.id} className="flex items-start justify-between gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
+                        <div key={operation.id} className="flex items-start justify-between gap-2 rounded-xl bg-white px-3 py-2.5 shadow-sm">
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-medium text-ink">{renderOrganizationOperationTitle(operation)}</div>
-                            <div className="mt-1 text-xs text-ink/50">
-                              {operation.reason || 'AI 认为这样更利于统一检索和清理冗余标签。'}
-                              {typeof operation.affectedUsageCount === 'number' ? ` · 当前引用 ${operation.affectedUsageCount} 次` : ''}
+                            <div className="mt-0.5 text-[11px] text-ink/50">
+                              {operation.reason || 'AI 建议'}
+                              {typeof operation.affectedUsageCount === 'number' ? ` · 引用 ${operation.affectedUsageCount} 次` : ''}
                             </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => handleDismissOrganizationOperation(operation.id)}
-                            className="rounded-full p-1.5 text-ink/35 transition hover:bg-rose-50 hover:text-rose-600"
+                            className="rounded-full p-1 text-ink/35 transition hover:bg-rose-50 hover:text-rose-600"
                             aria-label="移除此建议"
                           >
-                            <X className="h-4 w-4" />
+                            <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       ))}

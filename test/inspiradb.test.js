@@ -730,6 +730,7 @@ test('developer model config drives the active provider and model settings', asy
       zhipu: {
         apiKey: 'dev-config-token',
         visionModel: 'glm-test-vision',
+        reasoningModel: 'GLM-4.7',
         embeddingModel: 'embed-test-v2',
         embeddingDimensions: 512,
       },
@@ -741,6 +742,7 @@ test('developer model config drives the active provider and model settings', asy
       apiBase: 'https://open.bigmodel.cn/api/paas/v4',
       apiKey: 'dev-config-token',
       visionModel: 'glm-test-vision',
+      reasoningModel: 'GLM-4.7',
       embeddingModel: 'embed-test-v2',
       embeddingDimensions: 512,
     });
@@ -1499,6 +1501,112 @@ test('tag filter mode persists and tag CRUD manages hierarchy', async () => {
     assert.equal(reopened.getTagFilterMode(), 'or');
   } finally {
     reopened.close();
+  }
+});
+
+test('deleteTag cascades through used child tags and parent hierarchies', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-delete-tag-cascade-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const parent = app.createTag({ name: '测试分类', level: 1 });
+    const child = app.createTag({ name: '测试子标签', level: 2, parentId: parent.id });
+    const secondChild = app.createTag({ name: '另一个子标签', level: 2, parentId: parent.id });
+
+    const imageId = insertReadyImageWithTagIds(app, {
+      fileName: 'delete-cascade.jpg',
+      hash: 'delete-cascade',
+      caption: '测试删除级联',
+      tagIds: [child.id, secondChild.id],
+      vector: embedTextDeterministic('测试删除级联'),
+      source: 'user',
+    });
+
+    const deletedChild = app.deleteTag(child.id);
+    assert.equal(deletedChild.deleted, true);
+    assert.equal(deletedChild.affectedImageCount, 1);
+    assert.equal(app.db.get('SELECT id FROM tags WHERE id = :tagId', { tagId: child.id }), undefined);
+    assert.equal(
+      app.db.get(
+        `SELECT id
+         FROM image_tags
+         WHERE image_id = :imageId
+           AND tag_id = :tagId
+         LIMIT 1`,
+        { imageId, tagId: child.id },
+      ),
+      undefined,
+    );
+
+    const deletedParent = app.deleteTag(parent.id);
+    assert.equal(deletedParent.deleted, true);
+    assert.equal(deletedParent.affectedImageCount, 1);
+    assert.equal(app.db.get('SELECT id FROM tags WHERE id = :tagId', { tagId: parent.id }), undefined);
+    assert.equal(app.db.get('SELECT id FROM tags WHERE id = :tagId', { tagId: secondChild.id }), undefined);
+    assert.equal(
+      app.db.get(
+        `SELECT id
+         FROM image_tags
+         WHERE image_id = :imageId
+           AND tag_id = :tagId
+         LIMIT 1`,
+        { imageId, tagId: secondChild.id },
+      ),
+      undefined,
+    );
+
+    const refreshJobs = app.db.all(
+      `SELECT image_id
+       FROM analysis_jobs
+       WHERE job_type = 'refresh_embedding'
+       ORDER BY id ASC`,
+    );
+    assert.deepEqual(refreshJobs.map((row) => Number(row.image_id)), [imageId]);
+  } finally {
+    app.close();
+  }
+});
+
+test('listTagTree usageCount only counts currently active tag source', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-tag-usage-source-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const styleGroup = app.createTag({ name: '测试风格', level: 1 });
+    const aiOnlyTag = app.createTag({ name: '旧AI标签', level: 2, parentId: styleGroup.id });
+    const userTag = app.createTag({ name: '人工标签', level: 2, parentId: styleGroup.id });
+
+    const imageId = insertReadyImageWithTagIds(app, {
+      fileName: 'usage-source.jpg',
+      hash: 'usage-source',
+      caption: '测试图片',
+      tagIds: [aiOnlyTag.id],
+      vector: embedTextDeterministic('测试图片 旧AI标签'),
+      source: 'ai',
+    });
+
+    app.db.run(
+      `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+       VALUES (:imageId, :tagId, 'user', :createdAt)`,
+      {
+        imageId,
+        tagId: userTag.id,
+        createdAt: '2026-03-18T10:00:00.000Z',
+      },
+    );
+    app.db.run(
+      `UPDATE images
+       SET active_tag_source = 'user'
+       WHERE id = :imageId`,
+      { imageId },
+    );
+
+    const tree = app.listTagTree();
+    const styleNode = tree.find((group) => group.id === styleGroup.id);
+    assert.equal(styleNode.children.find((tag) => tag.id === aiOnlyTag.id).usageCount, 0);
+    assert.equal(styleNode.children.find((tag) => tag.id === userTag.id).usageCount, 1);
+  } finally {
+    app.close();
   }
 });
 

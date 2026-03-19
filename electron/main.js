@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
 import { MAX_IMAGE_COUNT } from '../src/core/config.js';
+import { createLogger } from '../src/utils/logger.js';
 
 const {
   app,
@@ -21,6 +22,7 @@ const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'bmp'];
 
 let mainWindow = null;
 let inspiraApp = null;
+const logger = createLogger('electron-main');
 
 function createAppError(code) {
   const error = new Error(code);
@@ -321,12 +323,46 @@ function registerIpcHandlers() {
     return inspiraApp.deleteTag(tagId);
   });
 
-  ipcMain.handle('inspiradb:preview-tag-organization', () => {
-    return inspiraApp.previewTagOrganization();
+  ipcMain.handle('inspiradb:preview-tag-organization', async () => {
+    logger.info('preview-tag-organization-ipc-received');
+    try {
+      const result = await inspiraApp.previewTagOrganization();
+      logger.info('preview-tag-organization-ipc-succeeded', {
+        operationCount: Array.isArray(result?.operations) ? result.operations.length : 0,
+        affectedImageCount: Number(result?.affectedImageCount || 0),
+      });
+      return result;
+    } catch (error) {
+      logger.error('preview-tag-organization-ipc-failed', {
+        error: String(error?.message || error),
+        code: error?.code || '',
+      });
+      throw error;
+    }
   });
 
   ipcMain.handle('inspiradb:apply-tag-organization-plan', (_, payload = {}) => {
-    return inspiraApp.applyTagOrganizationPlan(payload);
+    const operationCount = Array.isArray(payload)
+      ? payload.length
+      : Array.isArray(payload?.operations)
+        ? payload.operations.length
+        : 0;
+    logger.info('apply-tag-organization-plan-ipc-received', { operationCount });
+    try {
+      const result = inspiraApp.applyTagOrganizationPlan(payload);
+      logger.info('apply-tag-organization-plan-ipc-succeeded', {
+        appliedCount: Number(result?.appliedCount || 0),
+        skippedCount: Number(result?.skippedCount || 0),
+        affectedImageCount: Number(result?.affectedImageCount || 0),
+      });
+      return result;
+    } catch (error) {
+      logger.error('apply-tag-organization-plan-ipc-failed', {
+        error: String(error?.message || error),
+        code: error?.code || '',
+      });
+      throw error;
+    }
   });
 
   ipcMain.handle('inspiradb:get-tag-organization-status', () => {
