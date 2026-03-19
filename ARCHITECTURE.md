@@ -129,8 +129,8 @@
 │  │  └───────────────┘  └──────────────┘  └───────────────┘       │  │
 │  │                                                              │  │
 │  │  ┌───────────────┐  ┌──────────────┐  ┌───────────────┐       │  │
-│  │  │  AI Persist   │  │    Files     │  │    Vector     │       │  │
-│  │  │  (持久化层)    │  │   Utils      │  │    Utils      │       │  │
+│  │  │  TagStore     │  │    Files     │  │    Vector     │       │  │
+│  │  │  (标签管理)    │  │   Utils      │  │    Utils      │       │  │
 │  │  └───────────────┘  └──────────────┘  └───────────────┘       │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
@@ -183,20 +183,27 @@ CREATE TABLE captions (
   updated_at TEXT NOT NULL
 );
 
--- 标签字典
+-- 标签表（支持二级嵌套）
 CREATE TABLE tags (
-  id TEXT PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  language TEXT,
-  created_at TEXT NOT NULL
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  language TEXT DEFAULT 'zh',
+  parent_id INTEGER,           -- 父标签ID（一级标签为NULL）
+  level INTEGER DEFAULT 2,     -- 1=一级标签(父), 2=二级标签(子)
+  sort_order INTEGER DEFAULT 0,
+  is_system INTEGER DEFAULT 0, -- 1=系统标签，不可删除
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(name, language)
 );
 
 -- 图片-标签关联
 CREATE TABLE image_tags (
   image_id TEXT NOT NULL,
-  tag_id TEXT NOT NULL,
+  tag_id INTEGER NOT NULL,
   source TEXT,  -- ai/user
-  PRIMARY KEY (image_id, tag_id)
+  created_at TEXT,
+  PRIMARY KEY (image_id, tag_id, source)
 );
 
 -- 向量嵌入 (用于语义搜索)
@@ -273,6 +280,10 @@ CREATE TABLE app_settings (
 | `getImageCount()` | 获取当前图片总数 |
 | `ensureImportCapacity()` | 检查导入容量限制 |
 | `waitForImportedImagesSettled()` | 等待导入图片分析完成 |
+| `listTagTree()` | 获取标签树形结构（含图片计数） |
+| `createTag(payload)` | 创建标签（支持一级/二级） |
+| `updateTag(payload)` | 更新标签名称/父级 |
+| `deleteTag(tagId)` | 删除标签（检查引用和子标签） |
 
 ### 5.3 AI 服务 (src/services/)
 
@@ -290,6 +301,21 @@ function createModelConfig(overrides) {
     }
   };
 }
+```
+
+#### TagStore (src/core/tag-store.js)
+标签管理核心模块，支持二级嵌套标签结构。
+```javascript
+// 标签层级常量
+TAG_LEVEL_PARENT = 1  // 一级标签（分类）
+TAG_LEVEL_CHILD = 2   // 二级标签（具体标签）
+
+// 主要函数
+listParentTags(db)              // 获取所有一级标签
+listTagTree(db, countByTagId)   // 获取标签树（含图片计数）
+getTagById(db, tagId)           // 获取单个标签详情
+ensureSecondaryTag(db, name, options)  // 确保二级标签存在
+listEffectiveTagRecords(db, imageId)   // 获取图片的有效标签
 ```
 
 #### AI Factory (ai-factory.js)
@@ -315,7 +341,45 @@ class AnalysisQueue {
 }
 ```
 
-### 5.4 前端状态管理 (renderer/src/store/useAppStore.js)
+### 5.4 前端组件 (renderer/src/components/)
+
+#### TagManagerPanel (TagManagerPanel.jsx)
+标签管理面板，支持二级嵌套标签的增删改查。
+```javascript
+<TagManagerPanel
+  open={boolean}        // 是否显示
+  saving={boolean}      // 保存中状态
+  tagTree={array}       // 标签树数据
+  onClose={function}    // 关闭回调
+  onCreateTag={fn}      // 创建标签 (name, level, parentId)
+  onUpdateTag={fn}      // 更新标签 (tagId, name, parentId)
+  onDeleteTag={fn}      // 删除标签 (tagId)
+/>
+```
+
+**功能特性：**
+- 一级/二级标签分层展示（卡片式布局）
+- 内联编辑（点击编辑直接修改）
+- 添加二级标签后自动展开父标签
+- 删除前确认（显示关联图片数）
+- 系统标签保护（不可编辑删除）
+- 一键展开/折叠所有
+
+### 5.5 前端状态管理 (renderer/src/store/useAppStore.js)
+
+| 方法 | 功能 |
+|------|------|
+| `init()` | 初始化应用，加载设置和搜索 |
+| `runSearch()` / `refreshSearch()` | 执行搜索 |
+| `loadMore()` | 加载更多结果（分页） |
+| `selectTag(tagName)` / `clearTag()` | 标签筛选 |
+| `importFolder()` / `importFile()` | 导入操作 |
+| `selectImage(imageId)` | 选择图片查看详情 |
+| `saveMetadata()` | 保存元数据修改 |
+| `exportImage()` / `exportCurrentResultBatch()` | 导出 |
+| `copyImage()` | 复制到剪贴板 |
+| `rebuildAnalysis()` | 重新分析 |
+| `deleteSelected()` | 删除选中图片 | (renderer/src/store/useAppStore.js)
 
 | 方法 | 功能 |
 |------|------|
@@ -637,6 +701,7 @@ littlePin_Mac/
 │           ├── LibraryWorkspace.jsx
 │           ├── DetailPanel.jsx
 │           ├── GalleryCard.jsx
+│           ├── TagManagerPanel.jsx  # 标签管理面板
 │           └── ui/          # 基础 UI 组件
 ├── scripts/                  # 构建脚本
 │   ├── build-mac-icon.mjs
