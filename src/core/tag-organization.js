@@ -46,6 +46,19 @@ export function normalizeOrganizationSource(value) {
   return 'existing';
 }
 
+function normalizeOrganizationTarget(rawItem) {
+  const targetTagName = normalizeTagName(String(rawItem?.targetTagName || rawItem?.name || ''));
+  if (!targetTagName) {
+    return null;
+  }
+
+  return {
+    targetTagName,
+    targetParentName: normalizeTagName(String(rawItem?.targetParentName || rawItem?.parentName || '')),
+    source: normalizeOrganizationSource(rawItem?.source),
+  };
+}
+
 export function isValidGeneratedTagName(rawName) {
   const name = normalizeTagName(String(rawName || ''));
   if (!name) {
@@ -85,6 +98,7 @@ export function normalizeOrganizationOperations(items) {
       const level = normalizeOperationLevel(rawItem?.level);
       const name = normalizeTagName(String(rawItem?.name || ''));
       const parentName = normalizeTagName(String(rawItem?.parentName || ''));
+      const sourceTagId = Number(rawItem?.sourceTagId || rawItem?.fromTagId || 0);
       if (!level || !name) {
         continue;
       }
@@ -96,6 +110,7 @@ export function normalizeOrganizationOperations(items) {
         level,
         name,
         parentName: level === 2 ? parentName : '',
+        sourceTagId: level === 2 && sourceTagId > 0 ? sourceTagId : 0,
         reason,
       });
       continue;
@@ -163,11 +178,33 @@ export function normalizeOrganizationOperations(items) {
         continue;
       }
 
+      const replacementTargets = [];
+      const seenTargets = new Set();
+      for (const rawTarget of Array.isArray(rawItem?.replacementTargets) ? rawItem.replacementTargets : []) {
+        const normalizedTarget = normalizeOrganizationTarget(rawTarget);
+        if (!normalizedTarget) {
+          continue;
+        }
+
+        const fingerprint = [
+          normalizedTarget.targetTagName,
+          normalizedTarget.targetParentName,
+          normalizedTarget.source,
+        ].join(':');
+        if (seenTargets.has(fingerprint)) {
+          continue;
+        }
+
+        seenTargets.add(fingerprint);
+        replacementTargets.push(normalizedTarget);
+      }
+
       output.push({
         id: String(rawItem?.id || `op-${index + 1}`),
         kind,
         source,
         tagId,
+        replacementTargets,
         reason,
       });
     }

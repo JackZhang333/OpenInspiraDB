@@ -32,6 +32,7 @@ import {
   DEFAULT_TAG_FILTER_MODE,
   TAG_LEVEL_CHILD,
   TAG_LEVEL_PARENT,
+  UNCATEGORIZED_TAG_NAME,
   ensureParentTag,
   findPresetTaxonomyMatch,
   getAppSetting,
@@ -126,7 +127,7 @@ function buildInClauseParams(prefix, values) {
 
 function fingerprintOrganizationOperation(operation = {}) {
   if (operation.kind === 'create') {
-    return `create:${operation.level}:${operation.name}:${operation.parentName || ''}`;
+    return `create:${operation.level}:${operation.name}:${operation.parentName || ''}:${operation.sourceTagId || 0}`;
   }
   if (operation.kind === 'rename') {
     return `rename:${operation.tagId}:${operation.nextName}`;
@@ -138,7 +139,14 @@ function fingerprintOrganizationOperation(operation = {}) {
     return `move:${operation.tagId}:${operation.targetParentName || ''}`;
   }
   if (operation.kind === 'delete') {
-    return `delete:${operation.tagId}`;
+    const replacementFingerprint = (Array.isArray(operation.replacementTargets) ? operation.replacementTargets : [])
+      .map((target) => [
+        target?.targetTagName || '',
+        target?.targetParentName || '',
+        normalizeOrganizationSource(target?.source),
+      ].join(':'))
+      .join('|');
+    return `delete:${operation.tagId}:${replacementFingerprint}`;
   }
   return JSON.stringify(operation);
 }
@@ -146,6 +154,25 @@ function fingerprintOrganizationOperation(operation = {}) {
 function diffOrganizationOperations(before = [], after = []) {
   const afterFingerprints = new Set(after.map((operation) => fingerprintOrganizationOperation(operation)));
   return before.filter((operation) => !afterFingerprints.has(fingerprintOrganizationOperation(operation)));
+}
+
+function getOrganizationSubjectTagId(operation = {}) {
+  if (operation.kind === 'create' || operation.kind === 'merge') {
+    return Number(operation.sourceTagId || 0);
+  }
+  if (operation.kind === 'rename' || operation.kind === 'move' || operation.kind === 'delete') {
+    return Number(operation.tagId || 0);
+  }
+  return 0;
+}
+
+function isUncategorizedChildTag(tag) {
+  return tag?.level === TAG_LEVEL_CHILD && tag?.parentName === UNCATEGORIZED_TAG_NAME;
+}
+
+function getOrganizationDeleteThreshold(snapshot = {}) {
+  // 仅允许删除使用次数为 0 的标签
+  return 0;
 }
 
 function normalizeSelectedTagIds(db, selectedTagIds = []) {
@@ -549,11 +576,158 @@ export class InspiraDBApp {
     };
   }
 
+  reservePlannedOrganizationParent(parentName, snapshot, state) {
+    const normalizedParentName = normalizeTagName(parentName);
+    if (!normalizedParentName) {
+      return false;
+    }
+
+    const existingParent = snapshot.tagByName.get(normalizedParentName);
+    if (existingParent) {
+      return existingParent.level === TAG_LEVEL_PARENT;
+    }
+
+    if (state.plannedParentNames.has(normalizedParentName)) {
+      return true;
+    }
+
+    if (!isValidGeneratedTagName(normalizedParentName) || state.newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
+      return false;
+    }
+
+    state.plannedParentNames.add(normalizedParentName);
+    state.newParentCount += 1;
+    return true;
+  }
+
+  reservePlannedOrganizationChild(target, snapshot, state) {
+    const childName = normalizeTagName(target?.targetTagName || target?.name);
+    if (!childName) {
+      return null;
+    }
+
+    const existingChild = snapshot.tagByName.get(childName);
+    if (existingChild) {
+      return existingChild.level === TAG_LEVEL_CHILD
+        ? {
+          targetTagName: existingChild.name,
+          targetParentName: existingChild.parentName,
+          source: normalizeOrganizationSource(target?.source),
+        }
+        : null;
+    }
+
+    const source = normalizeOrganizationSource(target?.source);
+    let targetParentName = normalizeTagName(target?.targetParentName || target?.parentName || '');
+
+    if (state.plannedChildNames.has(childName)) {
+      return {
+        targetTagName: childName,
+        targetParentName,
+        source,
+      };
+    }
+
+    if (source === 'preset') {
+      const presetMatch = findPresetTaxonomyMatch(targetParentName, childName);
+      if (!presetMatch) {
+        return null;
+      }
+      targetParentName = presetMatch.parentName;
+    } else {
+      if (!isValidGeneratedTagName(childName) || !targetParentName || !isValidGeneratedTagName(targetParentName)) {
+        return null;
+      }
+    }
+
+    if (!this.reservePlannedOrganizationParent(targetParentName, snapshot, state)) {
+      return null;
+    }
+    if (state.newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
+      return null;
+    }
+
+    state.plannedChildNames.add(childName);
+    state.newChildCount += 1;
+
+    return {
+      targetTagName: childName,
+      targetParentName,
+      source,
+    };
+  }
+
+  sanitizeDeleteReplacementTargets(rawTargets, current, snapshot, state) {
+    const output = [];
+    const seenTargets = new Set();
+
+    for (const rawTarget of Array.isArray(rawTargets) ? rawTargets : []) {
+      const childName = normalizeTagName(rawTarget?.targetTagName);
+      if (!childName || childName === current.name) {
+        continue;
+      }
+
+      // 检查目标标签是否已存在
+      const existingChild = snapshot.tagByName.get(childName);
+      if (existingChild) {
+        if (existingChild.level === TAG_LEVEL_CHILD) {
+          const fingerprint = `${existingChild.name}:${existingChild.parentName}:existing`;
+          if (!seenTargets.has(fingerprint)) {
+            seenTargets.add(fingerprint);
+            output.push({
+              targetTagName: existingChild.name,
+              targetParentName: existingChild.parentName,
+              source: 'existing',
+            });
+          }
+        }
+        continue;
+      }
+
+      // 对于不存在的标签，如果是有效的生成名称，允许创建
+      const targetParentName = normalizeTagName(rawTarget?.targetParentName);
+      if (!isValidGeneratedTagName(childName) || !targetParentName) {
+        continue;
+      }
+
+      // 检查父标签是否可创建
+      if (!this.reservePlannedOrganizationParent(targetParentName, snapshot, state)) {
+        continue;
+      }
+      if (state.newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
+        continue;
+      }
+      if (state.plannedChildNames.has(childName)) {
+        continue;
+      }
+
+      state.plannedChildNames.add(childName);
+      state.newChildCount += 1;
+
+      const fingerprint = `${childName}:${targetParentName}:generated`;
+      if (!seenTargets.has(fingerprint)) {
+        seenTargets.add(fingerprint);
+        output.push({
+          targetTagName: childName,
+          targetParentName,
+          source: 'generated',
+        });
+      }
+    }
+
+    return output;
+  }
+
   sanitizeTagOrganizationOperations(rawOperations, snapshot = this.buildTagOrganizationSnapshot()) {
     const normalized = normalizeOrganizationOperations(rawOperations);
     const operations = [];
-    let newParentCount = 0;
-    let newChildCount = 0;
+    const state = {
+      newParentCount: 0,
+      newChildCount: 0,
+      plannedParentNames: new Set(),
+      plannedChildNames: new Set(),
+      terminalSourceTagIds: new Set(),
+    };
 
     for (const operation of normalized) {
       if (operation.kind === 'create') {
@@ -561,48 +735,34 @@ export class InspiraDBApp {
           continue;
         }
 
-        if (operation.source === 'preset') {
-          if (operation.level === TAG_LEVEL_CHILD) {
-            const presetMatch = findPresetTaxonomyMatch(operation.parentName, operation.name);
-            if (!presetMatch) {
-              continue;
-            }
-            operations.push({
-              ...operation,
-              name: presetMatch.childName,
-              parentName: presetMatch.parentName,
-            });
-          } else {
-            operations.push(operation);
-          }
-          continue;
-        }
-
-        if (!isValidGeneratedTagName(operation.name)) {
-          continue;
-        }
-
         if (operation.level === TAG_LEVEL_PARENT) {
-          if (newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
+          if (!isValidGeneratedTagName(operation.name) || !this.reservePlannedOrganizationParent(operation.name, snapshot, state)) {
             continue;
           }
-          newParentCount += 1;
           operations.push(operation);
           continue;
         }
 
-        if (!operation.parentName || !isValidGeneratedTagName(operation.parentName)) {
+        const sourceTag = snapshot.tagById.get(Number(operation.sourceTagId));
+        if (!sourceTag || sourceTag.level !== TAG_LEVEL_CHILD || sourceTag.isSystem) {
           continue;
         }
-        const parentCollision = snapshot.tagByName.get(operation.parentName);
-        if (parentCollision && parentCollision.level !== TAG_LEVEL_PARENT) {
+
+        const resolvedTarget = this.reservePlannedOrganizationChild({
+          targetTagName: operation.name,
+          targetParentName: operation.parentName,
+          source: operation.source,
+        }, snapshot, state);
+        if (!resolvedTarget) {
           continue;
         }
-        if (newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
-          continue;
-        }
-        newChildCount += 1;
-        operations.push(operation);
+
+        operations.push({
+          ...operation,
+          name: resolvedTarget.targetTagName,
+          parentName: resolvedTarget.targetParentName,
+          source: resolvedTarget.source,
+        });
         continue;
       }
 
@@ -624,42 +784,26 @@ export class InspiraDBApp {
 
       if (operation.kind === 'merge') {
         const current = snapshot.tagById.get(Number(operation.sourceTagId));
-        if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
+        if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem || state.terminalSourceTagIds.has(current.id)) {
           continue;
         }
 
-        const existing = snapshot.tagByName.get(operation.targetTagName);
-        if (!existing) {
-          if (operation.source === 'preset') {
-            const presetMatch = findPresetTaxonomyMatch(operation.targetParentName, operation.targetTagName);
-            if (!presetMatch) {
-              continue;
-            }
-            operations.push({
-              ...operation,
-              targetTagName: presetMatch.childName,
-              targetParentName: presetMatch.parentName,
-            });
-            continue;
-          }
-
-          if (!isValidGeneratedTagName(operation.targetTagName)) {
-            continue;
-          }
-          if (!operation.targetParentName || !isValidGeneratedTagName(operation.targetParentName)) {
-            continue;
-          }
-          const parentCollision = snapshot.tagByName.get(operation.targetParentName);
-          if (parentCollision && parentCollision.level !== TAG_LEVEL_PARENT) {
-            continue;
-          }
-          if (newChildCount >= MAX_ORGANIZATION_NEW_CHILD_COUNT) {
-            continue;
-          }
-          newChildCount += 1;
+        const resolvedTarget = this.reservePlannedOrganizationChild({
+          targetTagName: operation.targetTagName,
+          targetParentName: operation.targetParentName,
+          source: operation.source,
+        }, snapshot, state);
+        if (!resolvedTarget || resolvedTarget.targetTagName === current.name) {
+          continue;
         }
 
-        operations.push(operation);
+        state.terminalSourceTagIds.add(current.id);
+        operations.push({
+          ...operation,
+          targetTagName: resolvedTarget.targetTagName,
+          targetParentName: resolvedTarget.targetParentName,
+          source: resolvedTarget.source,
+        });
         continue;
       }
 
@@ -668,61 +812,50 @@ export class InspiraDBApp {
         if (!current || current.level !== TAG_LEVEL_CHILD || current.isSystem) {
           continue;
         }
-        if (!operation.targetParentName) {
+        if (!operation.targetParentName || state.terminalSourceTagIds.has(current.id)) {
           continue;
         }
 
-        const existingParent = snapshot.tagByName.get(operation.targetParentName);
-        if (!existingParent) {
-          if (!isValidGeneratedTagName(operation.targetParentName)) {
-            continue;
-          }
-          if (newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
-            continue;
-          }
-          newParentCount += 1;
-        } else if (existingParent.level !== TAG_LEVEL_PARENT) {
+        if (!this.reservePlannedOrganizationParent(operation.targetParentName, snapshot, state)) {
           continue;
         }
 
+        state.terminalSourceTagIds.add(current.id);
         operations.push(operation);
         continue;
       }
 
       if (operation.kind === 'delete') {
         const current = snapshot.tagById.get(Number(operation.tagId));
-        if (!current || current.isSystem) {
+        if (!current || current.isSystem || current.level === TAG_LEVEL_PARENT) {
           continue;
         }
-        // 禁止删除一级分类，只允许删除二级标签
-        if (current.level === TAG_LEVEL_PARENT) {
+        if (isUncategorizedChildTag(current) || state.terminalSourceTagIds.has(current.id)) {
           continue;
         }
-        // 细腻化的删除策略：结合图片数量和标签使用率
+
         const usageCount = Number(current.usageCount || 0);
-        const imageCount = snapshot.imageCount || 0;
-        const totalTags = snapshot.flatTags.filter(t => t.level === TAG_LEVEL_CHILD).length;
-        const avgTagsPerImage = imageCount > 0 ? totalTags / imageCount : 0;
-
-        // 计算删除阈值：
-        // - 图片少(<50)且标签多(>人均3个)：只删0次
-        // - 图片中等(50-200)：删<=2次
-        // - 图片多(>200)：删<=5次
-        let deleteThreshold = 0;
-        if (imageCount < 50 && avgTagsPerImage > 3) {
-          deleteThreshold = 0; // 保守策略
-        } else if (imageCount < 100) {
-          deleteThreshold = 1; // 轻度清理
-        } else if (imageCount < 200) {
-          deleteThreshold = 2; // 中度清理
-        } else {
-          deleteThreshold = 5; // 积极清理
-        }
-
-        if (usageCount > deleteThreshold) {
+        // 仅允许删除使用次数为 0 的标签
+        if (usageCount > 0) {
           continue;
         }
-        operations.push(operation);
+
+        const replacementTargets = this.sanitizeDeleteReplacementTargets(
+          operation.replacementTargets,
+          current,
+          snapshot,
+          state,
+        );
+
+        if (usageCount > getOrganizationDeleteThreshold(snapshot)) {
+          continue;
+        }
+
+        state.terminalSourceTagIds.add(current.id);
+        operations.push({
+          ...operation,
+          replacementTargets,
+        });
       }
     }
 
@@ -733,18 +866,9 @@ export class InspiraDBApp {
     const affectedTagIds = new Set();
 
     for (const operation of operations) {
-      if (operation.kind === 'rename' || operation.kind === 'move' || operation.kind === 'delete') {
-        const current = snapshot.tagById.get(Number(operation.tagId));
-        if (current?.level === TAG_LEVEL_CHILD) {
-          affectedTagIds.add(Number(operation.tagId));
-        }
-      }
-
-      if (operation.kind === 'merge') {
-        const current = snapshot.tagById.get(Number(operation.sourceTagId));
-        if (current?.level === TAG_LEVEL_CHILD) {
-          affectedTagIds.add(Number(operation.sourceTagId));
-        }
+      const current = snapshot.tagById.get(getOrganizationSubjectTagId(operation));
+      if (current?.level === TAG_LEVEL_CHILD) {
+        affectedTagIds.add(current.id);
       }
     }
 
@@ -765,16 +889,20 @@ export class InspiraDBApp {
 
   decorateTagOrganizationOperations(operations = [], snapshot = this.buildTagOrganizationSnapshot()) {
     return operations.map((operation) => {
-      const currentTag = operation.kind === 'merge'
-        ? snapshot.tagById.get(Number(operation.sourceTagId))
-        : snapshot.tagById.get(Number(operation.tagId));
+      const currentTag = snapshot.tagById.get(getOrganizationSubjectTagId(operation));
+      const replacementTargetNames = (Array.isArray(operation.replacementTargets) ? operation.replacementTargets : [])
+        .map((target) => target?.targetTagName)
+        .filter(Boolean);
 
       return {
         ...operation,
         currentName: currentTag?.name || '',
         currentParentName: currentTag?.parentName || '',
         currentLevel: currentTag?.level || 0,
+        sourceName: operation.kind === 'create' ? currentTag?.name || '' : '',
+        sourceParentName: operation.kind === 'create' ? currentTag?.parentName || '' : '',
         affectedUsageCount: Number(currentTag?.usageCount || 0),
+        replacementTargetNames,
       };
     });
   }
@@ -783,7 +911,9 @@ export class InspiraDBApp {
     const snapshot = this.buildTagOrganizationSnapshot();
     const rawOperations = await this.aiService.previewTagOrganization();
     const normalizedOperations = normalizeOrganizationOperations(rawOperations);
-    const operations = this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot);
+    const operations = this.prioritizeTagOrganizationOperations(
+      this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot),
+    );
     const droppedOperations = diffOrganizationOperations(normalizedOperations, operations);
     const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
     const summary = summarizeOrganizationOperations(operations);
@@ -1184,6 +1314,47 @@ export class InspiraDBApp {
     }
   }
 
+  listTagImageRelations(tagId) {
+    return this.db.all(
+      `SELECT image_id, source
+       FROM image_tags
+       WHERE tag_id = :tagId`,
+      { tagId: Number(tagId) || 0 },
+    );
+  }
+
+  attachTagToRelations(targetTagId, relations = [], createdAt = nowIso()) {
+    for (const relation of relations) {
+      this.db.run(
+        `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+         VALUES (:imageId, :tagId, :source, :createdAt)
+         ON CONFLICT(image_id, tag_id, source) DO NOTHING`,
+        {
+          imageId: Number(relation.image_id),
+          tagId: Number(targetTagId),
+          source: String(relation.source || 'ai'),
+          createdAt,
+        },
+      );
+    }
+  }
+
+  prioritizeTagOrganizationOperations(operations = []) {
+    const priorityByKind = new Map([
+      ['create', 1],
+      ['rename', 2],
+      ['move', 3],
+      ['merge', 4],
+      ['delete', 5],
+    ]);
+
+    return [...operations].sort((left, right) => {
+      const leftPriority = priorityByKind.get(left?.kind) || 99;
+      const rightPriority = priorityByKind.get(right?.kind) || 99;
+      return leftPriority - rightPriority;
+    });
+  }
+
   resolveOrganizationTargetChildTag(operation, createdAt) {
     const existing = getTagByName(this.db, operation.targetTagName);
     if (existing) {
@@ -1240,12 +1411,23 @@ export class InspiraDBApp {
           : { applied: false, skipped: 'TAG_NAME_CONFLICT' };
       }
 
+      const sourceTag = getTagById(this.db, operation.sourceTagId);
+      if (!sourceTag || sourceTag.level !== TAG_LEVEL_CHILD || sourceTag.isSystem) {
+        return { applied: false, skipped: 'SOURCE_TAG_NOT_FOUND' };
+      }
+
       const parentTag = ensureParentTag(this.db, operation.parentName, { createdAt });
       const created = ensureSecondaryTag(this.db, operation.name, {
         parentId: parentTag?.id,
         createdAt,
       });
-      return { applied: Boolean(created), tag: created };
+      if (!created) {
+        return { applied: false, skipped: 'TAG_CREATE_FAILED' };
+      }
+
+      const relations = this.listTagImageRelations(sourceTag.id);
+      this.attachTagToRelations(created.id, relations, createdAt);
+      return { applied: true, tag: created };
     }
 
     if (operation.kind === 'rename') {
@@ -1346,26 +1528,8 @@ export class InspiraDBApp {
         return { applied: false, skipped: 'MERGE_TARGET_SAME' };
       }
 
-      const relations = this.db.all(
-        `SELECT image_id, source
-         FROM image_tags
-         WHERE tag_id = :tagId`,
-        { tagId: current.id },
-      );
-
-      for (const relation of relations) {
-        this.db.run(
-          `INSERT INTO image_tags (image_id, tag_id, source, created_at)
-           VALUES (:imageId, :tagId, :source, :createdAt)
-           ON CONFLICT(image_id, tag_id, source) DO NOTHING`,
-          {
-            imageId: Number(relation.image_id),
-            tagId: targetTag.id,
-            source: String(relation.source || 'ai'),
-            createdAt,
-          },
-        );
-      }
+      const relations = this.listTagImageRelations(current.id);
+      this.attachTagToRelations(targetTag.id, relations, createdAt);
 
       this.db.run('DELETE FROM image_tags WHERE tag_id = :tagId', { tagId: current.id });
       this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
@@ -1393,6 +1557,20 @@ export class InspiraDBApp {
         return { applied: true };
       }
 
+      const relations = this.listTagImageRelations(current.id);
+      const targetTagIds = [];
+      for (const target of Array.isArray(operation.replacementTargets) ? operation.replacementTargets : []) {
+        const targetTag = this.resolveOrganizationTargetChildTag(target, createdAt);
+        if (!targetTag || targetTag.level !== TAG_LEVEL_CHILD || targetTag.id === current.id) {
+          continue;
+        }
+        targetTagIds.push(targetTag.id);
+      }
+
+      for (const targetTagId of targetTagIds) {
+        this.attachTagToRelations(targetTagId, relations, createdAt);
+      }
+
       this.db.run('DELETE FROM image_tags WHERE tag_id = :tagId', { tagId: current.id });
       this.db.run('DELETE FROM tags WHERE id = :tagId', { tagId: current.id });
       return { applied: true };
@@ -1405,7 +1583,9 @@ export class InspiraDBApp {
     const inputOperations = Array.isArray(payload) ? payload : payload.operations;
     const snapshot = this.buildTagOrganizationSnapshot();
     const normalizedOperations = normalizeOrganizationOperations(inputOperations);
-    const operations = this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot);
+    const operations = this.prioritizeTagOrganizationOperations(
+      this.sanitizeTagOrganizationOperations(normalizedOperations, snapshot),
+    );
     const droppedOperations = diffOrganizationOperations(normalizedOperations, operations);
     const affectedImageIds = this.collectAffectedImageIdsForOrganization(operations, snapshot);
     const appliedOperations = [];

@@ -204,7 +204,9 @@ function renderOrganizationOperationTitle(operation) {
   if (operation.kind === 'create') {
     return operation.level === 1
       ? `新增一级分类「${operation.name}」`
-      : `新增标签「${operation.name}」到「${operation.parentName}」`;
+      : operation.sourceName
+        ? `从「${operation.sourceName}」派生新增标签「${operation.name}」`
+        : `新增标签「${operation.name}」到「${operation.parentName}」`;
   }
 
   if (operation.kind === 'rename') {
@@ -219,7 +221,27 @@ function renderOrganizationOperationTitle(operation) {
     return `将「${operation.currentName || operation.tagId}」移动到「${operation.targetParentName}」`;
   }
 
-  return `删除「${operation.currentName || operation.tagId}」`;
+  return operation.replacementTargetNames?.length
+    ? `删除「${operation.currentName || operation.tagId}」，替换为「${operation.replacementTargetNames.join(' / ')}」`
+    : `删除「${operation.currentName || operation.tagId}」`;
+}
+
+function renderOrganizationOperationMeta(operation) {
+  const details = [operation.reason || 'AI 建议'];
+
+  if (typeof operation.affectedUsageCount === 'number') {
+    details.push(`引用 ${operation.affectedUsageCount} 次`);
+  }
+
+  if (operation.kind === 'create' && operation.sourceParentName) {
+    details.push(`来源分类「${operation.sourceParentName}」`);
+  }
+
+  if (operation.kind === 'delete' && operation.replacementTargetNames?.length) {
+    details.push(`替代标签 ${operation.replacementTargetNames.join(' / ')}`);
+  }
+
+  return details.join(' · ');
 }
 
 function confirmTagDeletion(message) {
@@ -555,6 +577,10 @@ export function TagSettingsDialog({
     });
   };
 
+  const handleCloseOrganizationPreview = () => {
+    setOrganizationPreview(null);
+  };
+
   const handleApplyOrganization = async () => {
     const operations = organizationPreview?.operations || [];
     if (!operations.length) {
@@ -592,16 +618,6 @@ export function TagSettingsDialog({
             <div className="mt-1 text-sm text-ink/45">在这里整理一级分类和二级标签，最后统一提交保存。</div>
           </div>
           <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handlePreviewOrganization}
-              disabled={organizationLoading || organizationApplying || saving}
-              className="h-11 rounded-2xl border-moss/15 bg-white px-5 text-moss hover:bg-moss/5"
-            >
-              {organizationLoading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Lightbulb className="mr-1.5 h-4 w-4" />}
-              {organizationLoading ? '整理中...' : 'AI 整理'}
-            </Button>
             <button
               type="button"
               onClick={onClose}
@@ -613,67 +629,6 @@ export function TagSettingsDialog({
         </div>
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
-          {organizationPreview ? (
-            <div className="mb-6 rounded-[24px] border border-moss/15 bg-white/90 p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="text-base font-semibold text-ink">AI 整理预览</div>
-                  <div className="mt-1 text-sm text-ink/50">
-                    共 {organizationPreview.summary?.totalTags || 0} 个标签，低频标签 {organizationPreview.summary?.lowUsageTagCount || 0} 个，预计影响 {organizationPreview.affectedImageCount || 0} 张图片。
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(ORGANIZATION_GROUP_LABELS).map(([kind, label]) => (
-                    <div key={kind} className="rounded-full bg-[#f4f8ef] px-3 py-1 text-xs font-medium text-ink/60">
-                      {label} {organizationPreview.summary?.[`${kind}Count`] || 0}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-4">
-                {groupedOrganizationOperations.map(([kind, operations]) => (
-                  <div key={kind} className="rounded-[20px] bg-[#f4f8ef] p-4">
-                    <div className="mb-3 text-sm font-semibold text-ink">{ORGANIZATION_GROUP_LABELS[kind]}</div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {operations.map((operation) => (
-                        <div key={operation.id} className="flex items-start justify-between gap-2 rounded-xl bg-white px-3 py-2.5 shadow-sm">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium text-ink">{renderOrganizationOperationTitle(operation)}</div>
-                            <div className="mt-0.5 text-[11px] text-ink/50">
-                              {operation.reason || 'AI 建议'}
-                              {typeof operation.affectedUsageCount === 'number' ? ` · 引用 ${operation.affectedUsageCount} 次` : ''}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleDismissOrganizationOperation(operation.id)}
-                            className="rounded-full p-1 text-ink/35 transition hover:bg-rose-50 hover:text-rose-600"
-                            aria-label="移除此建议"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <Button
-                  type="button"
-                  onClick={handleApplyOrganization}
-                  disabled={organizationApplying || saving || !(organizationPreview.operations || []).length}
-                  className="h-11 rounded-2xl px-5"
-                >
-                  {organizationApplying ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
-                  {organizationApplying ? '应用中...' : '应用整理'}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
           <div className="mb-6 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-white/80 p-5 shadow-sm">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">一级标签</div>
             <div className="flex flex-col gap-3 md:flex-row">

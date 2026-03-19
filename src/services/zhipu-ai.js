@@ -21,6 +21,9 @@ import { saveAiTags, upsertEmbedding } from './ai-persistence.js';
 
 const MAX_CUSTOM_PARENT_COUNT = 10;
 const MAX_CUSTOM_CHILDREN_PER_PARENT = 16;
+const MAX_ORGANIZATION_EVIDENCE_TAGS = 20;
+const MAX_ORGANIZATION_SAMPLE_CAPTIONS = 3;
+const MAX_ORGANIZATION_COTAG_COUNT = 5;
 
 function toMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
@@ -172,6 +175,71 @@ function parseAnalysisPayload(rawText, image) {
   };
 }
 
+function truncateInlineText(value, maxLength = 48) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return '';
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function buildTagEvidenceLines(db, candidates = []) {
+  const output = [];
+
+  for (const candidate of candidates) {
+    const sampleRows = db.all(
+      `SELECT DISTINCT i.id, COALESCE(c.content, '') AS caption
+       FROM image_tags it
+       JOIN images i ON i.id = it.image_id
+       LEFT JOIN captions c ON c.id = i.active_caption_id
+       WHERE it.tag_id = :tagId
+       ORDER BY i.updated_at DESC, i.id DESC
+       LIMIT :limit`,
+      {
+        tagId: candidate.id,
+        limit: MAX_ORGANIZATION_SAMPLE_CAPTIONS,
+      },
+    );
+
+    const coTagRows = db.all(
+      `SELECT t.name, COUNT(*) AS total
+       FROM image_tags base
+       JOIN image_tags related ON related.image_id = base.image_id
+       JOIN tags t ON t.id = related.tag_id
+       WHERE base.tag_id = :tagId
+         AND related.tag_id != :tagId
+         AND t.level = 2
+       GROUP BY related.tag_id
+       ORDER BY total DESC, t.name ASC
+       LIMIT :limit`,
+      {
+        tagId: candidate.id,
+        limit: MAX_ORGANIZATION_COTAG_COUNT,
+      },
+    );
+
+    const captionSummary = sampleRows
+      .map((row) => truncateInlineText(row.caption, 42))
+      .filter(Boolean)
+      .join(' / ');
+
+    const coTagSummary = coTagRows
+      .map((row) => `${row.name}(${Number(row.total || 0)})`)
+      .join('、');
+
+    output.push([
+      `${candidate.name}[id:${candidate.id},parent:${candidate.parentName},count:${candidate.count}]`,
+      coTagSummary ? `共现：${coTagSummary}` : '共现：暂无明显共现标签',
+      captionSummary ? `示例摘要：${captionSummary}` : '示例摘要：暂无图片文案',
+    ].join('；'));
+  }
+
+  return output;
+}
+
 function buildTagOrganizationContext(db) {
   const groups = listTagTree(db);
   const groupLines = groups.map((group) => {
@@ -184,10 +252,17 @@ function buildTagOrganizationContext(db) {
   const lowUsageTags = groups
     .flatMap((group) => (group.children || [])
       .filter((child) => Number(child.usageCount || 0) <= 5)
-      .map((child) => ({ name: child.name, id: child.id, count: Number(child.usageCount || 0) })))
+      .map((child) => ({
+        name: child.name,
+        id: child.id,
+        parentName: group.name,
+        count: Number(child.usageCount || 0),
+      })))
+    .sort((left, right) => left.count - right.count || left.name.localeCompare(right.name, 'zh-Hans-CN'))
     .slice(0, 80);
 
   const presetGroups = PRESET_TAXONOMY.map((group) => `${group.name}：${group.children.join('、')}`);
+  const evidenceLines = buildTagEvidenceLines(db, lowUsageTags.slice(0, MAX_ORGANIZATION_EVIDENCE_TAGS));
 
   return [
     '当前数据库真实标签如下（格式：标签名[id:数字ID,count:使用次数]）：',
@@ -197,6 +272,9 @@ function buildTagOrganizationContext(db) {
     ...presetGroups,
     '',
     lowUsageTags.length ? `低使用标签（<=5次）：${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join('、')}` : '当前没有低使用标签。',
+    '',
+    evidenceLines.length ? '低频标签样例证据（优先参考这些标签决定是否新增/合并/删除/移动）：' : '',
+    ...evidenceLines,
   ].join('\n');
 }
 
@@ -440,9 +518,7 @@ export class ZhipuAiService {
     const settings = this.getSettings();
     const context = buildTagOrganizationContext(this.db);
     const imageCount = this.db.get('SELECT COUNT(*) AS total FROM images')?.total || 0;
-    const deleteStrategy = imageCount < 100
-      ? '【当前图片较少】只删除使用次数为0的二级标签，保留所有使用次数>=1的标签'
-      : '【当前图片较多】可以删除使用次数<=5的低频标签';
+    const deleteStrategy = '【删除策略】仅删除使用次数为0的二级标签；禁止删除有关联图片的标签';
     const response = await this.request('/chat/completions', {
       model: settings.reasoningModel || settings.visionModel,
       messages: [
@@ -451,24 +527,44 @@ export class ZhipuAiService {
           content: `你是图片标签治理助手。请直接输出 JSON 对象，格式为 {"operations":[...]}，不要有任何推理过程或解释文字。
 
 可用操作类型：
-- create: {"kind":"create","level":2,"name":"新标签","parentName":"一级分类","source":"generated","reason":"..."}
+- create: {"kind":"create","level":2,"name":"新标签","parentName":"一级分类","source":"generated","sourceTagId":18,"reason":"..."}
 - rename: {"kind":"rename","tagId":12,"nextName":"极简","reason":"..."}
 - merge: {"kind":"merge","sourceTagId":18,"targetTagName":"极简","targetParentName":"风格","source":"existing","reason":"..."}
 - move: {"kind":"move","tagId":28,"targetParentName":"行业 / 用途","reason":"..."}
-- delete: {"kind":"delete","tagId":33,"reason":"..."}
+- delete: {"kind":"delete","tagId":33,"replacementTargets":[{"targetTagName":"极简","targetParentName":"风格","source":"existing"}],"reason":"..."}
 
 整理规则（重要）：
 1. 【禁止删除一级分类】只能删除二级标签
-2. 【禁止动"未分组"分类】"未分组"下的标签不要删除，也不要移动
-3. ${deleteStrategy}
-4. 优先复用已有标签，其次复用预设词库，最后才允许造新词
-5. 遇到近义词直接统一，不要保留多个相似标签
-6. 最多新增 ${MAX_ORGANIZATION_NEW_PARENT_COUNT} 个一级标签、最多新增 ${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签
-7. 必须直接输出 JSON，禁止输出 markdown 或解释性文字`,
+2. 【谨慎处理"未分组"分类】"未分组"下的标签不要删除；允许在分类明确时把它们移动到更合适的一级分类
+3. create 仅用于新增一级分类，或“基于已有来源标签批量派生一个新二级标签”。如果是新增二级标签，必须填写 sourceTagId，表示创建后把该来源标签当前关联的全部图片也挂上新标签
+4. merge 表示把 sourceTagId 的全部图片关系迁移到【已存在的】目标标签，再删除 sourceTagId（极其重要：目标标签必须已存在，且不能与源标签同名）
+5. move 表示仅把一个二级标签从父分类 A 挪到父分类 B，不改变图片上的标签关系
+6. delete 操作限制（极其重要）：
+   - 仅允许删除使用次数为 0 的二级标签
+   - 禁止删除有任何图片关联的标签（无论 replacementTargets 是什么）
+   - 如果标签使用次数 > 0，不要建议 delete，改为建议 merge（到语义相近的已有标签）或保持现状
+7. 【重要merge规则】
+   - merge 的目标标签必须是数据库中【已存在】的二级标签（source 必须是 "existing"）
+   - 不要建议 merge 到同名标签，没有意义
+   - 只有当两个标签语义高度相似时才建议 merge（如"极简风"合并到"极简"）
+   - 使用频次低的标签不应该 merge 到同样低频的标签，而是考虑 move 到更合适的分类
+8. ${deleteStrategy}
+9. 优先复用已有标签，其次复用预设词库，最后才允许造新词
+10. 遇到近义词直接统一，不要保留多个相似标签
+11. 最多新增 ${MAX_ORGANIZATION_NEW_PARENT_COUNT} 个一级标签、最多新增 ${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签
+12. 必须直接输出 JSON，禁止输出 markdown 或解释性文字`,
         },
         {
           role: 'user',
-          content: `请根据当前标签数据库给出一份“先预览、后执行”的整理方案。\n\n${context}`,
+          content: `请根据当前标签数据库给出一份“先预览、后执行”的整理方案。
+
+【重要判断原则】
+1. merge 只能合并到数据库中【已存在】的标签，且必须语义相近（如"极简风"->"极简"，"iphone"->"苹果"）
+2. 不要建议将标签合并到【同名】标签，这没有意义
+3. 不要建议将低频标签合并到另一个【同样低频】的标签，这样没有优化效果
+4. 如果低频标签找不到语义相近且使用频次较高的合并目标，建议 move 到更合适的一级分类，或者保持现状
+
+${context}`,
         },
       ],
       temperature: 0.2,

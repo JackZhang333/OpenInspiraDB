@@ -1616,10 +1616,11 @@ test('ai tag organization previews and applies batched create/merge/move/delete 
 
   try {
     const styleGroup = app.createTag({ name: '风格', level: 1 });
+    const topicGroup = app.createTag({ name: '主题', level: 1 });
     const minimalTag = app.createTag({ name: '极简', level: 2, parentId: styleGroup.id });
     const simpleTag = app.createTag({ name: '简约', level: 2, parentId: styleGroup.id });
-    const nicheTag = app.createTag({ name: '冷门标签', level: 2 });
-    const nightTag = app.createTag({ name: '夜景', level: 2 });
+    const nicheTag = app.createTag({ name: '冷门标签', level: 2, parentId: topicGroup.id });
+    const nightTag = app.createTag({ name: '夜景', level: 2, parentId: topicGroup.id });
 
     const imageMinimal = insertReadyImageWithTagIds(app, {
       fileName: 'minimal.jpg',
@@ -1674,6 +1675,7 @@ test('ai tag organization previews and applies batched create/merge/move/delete 
                       name: '雨夜街头',
                       parentName: '场景',
                       source: 'generated',
+                      sourceTagId: nightTag.id,
                       reason: '这是当前库里没有的具体场景词。',
                     },
                     {
@@ -1693,6 +1695,13 @@ test('ai tag organization previews and applies batched create/merge/move/delete 
                     {
                       kind: 'delete',
                       tagId: nicheTag.id,
+                      replacementTargets: [
+                        {
+                          targetTagName: '夜景',
+                          targetParentName: '场景',
+                          source: 'existing',
+                        },
+                      ],
                       reason: '低频且信息价值不足。',
                     },
                   ],
