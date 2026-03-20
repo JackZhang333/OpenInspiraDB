@@ -40,16 +40,21 @@ function toMimeType(filePath) {
   return 'application/octet-stream';
 }
 
-async function fileToDataUrl(filePath) {
+async function fileToDataUrl(filePath, logger) {
   const ext = path.extname(filePath).toLowerCase();
+  logger?.info?.('fileToDataUrl-start', { filePath, ext });
 
   // HEIC 格式需要转换为 JPEG 才能被 AI 服务识别
   if (ext === '.heic') {
+    logger?.info?.('fileToDataUrl-heic-detected', { filePath });
     try {
       // 使用 macOS 内置的 sips 命令转换 HEIC 到 JPEG
       const jpegPath = `${filePath}.temp.jpg`;
+      logger?.info?.('fileToDataUrl-sips-start', { filePath, jpegPath });
+
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
+          logger?.error?.('fileToDataUrl-sips-timeout', { filePath });
           reject(new Error('HEIC conversion timeout'));
         }, 10000); // 10秒超时
 
@@ -57,6 +62,7 @@ async function fileToDataUrl(filePath) {
 
         proc.on('close', (code) => {
           clearTimeout(timeout);
+          logger?.info?.('fileToDataUrl-sips-close', { filePath, code });
           if (code === 0) {
             resolve();
           } else {
@@ -66,22 +72,27 @@ async function fileToDataUrl(filePath) {
 
         proc.on('error', (err) => {
           clearTimeout(timeout);
+          logger?.error?.('fileToDataUrl-sips-error', { filePath, error: err.message });
           reject(err);
         });
       });
 
+      logger?.info?.('fileToDataUrl-sips-success', { filePath, jpegPath });
       const base64 = fs.readFileSync(jpegPath).toString('base64');
       fs.unlinkSync(jpegPath); // 删除临时文件
+      logger?.info?.('fileToDataUrl-heic-converted', { filePath, base64Length: base64.length });
       return `data:image/jpeg;base64,${base64}`;
     } catch (error) {
       // 转换失败则记录日志并发送原始 HEIC 数据（AI 服务会报错但不会卡住应用）
-      console.error('HEIC to JPEG conversion failed:', error);
+      logger?.error?.('fileToDataUrl-heic-conversion-failed', { filePath, error: error.message });
       const base64 = fs.readFileSync(filePath).toString('base64');
       return `data:${toMimeType(filePath)};base64,${base64}`;
     }
   }
 
+  logger?.info?.('fileToDataUrl-standard-file', { filePath, ext });
   const base64 = fs.readFileSync(filePath).toString('base64');
+  logger?.info?.('fileToDataUrl-complete', { filePath, base64Length: base64.length });
   return `data:${toMimeType(filePath)};base64,${base64}`;
 }
 
@@ -469,14 +480,18 @@ export class ZhipuAiService {
   }
 
   async analyzeImage(imageId) {
+    this.logger?.info?.('analyzeImage-start', { imageId });
     const image = this.db.get('SELECT * FROM images WHERE id = :imageId', { imageId });
     if (!image) {
+      this.logger?.error?.('analyzeImage-image-not-found', { imageId });
       const error = new Error('IMAGE_NOT_FOUND');
       error.code = 'IMAGE_NOT_FOUND';
       throw error;
     }
 
-    const imageDataUrl = await fileToDataUrl(image.library_path);
+    this.logger?.info?.('analyzeImage-image-found', { imageId, libraryPath: image.library_path });
+    const imageDataUrl = await fileToDataUrl(image.library_path, this.logger);
+    this.logger?.info?.('analyzeImage-dataurl-ready', { imageId, dataUrlLength: imageDataUrl.length });
     const settings = this.getSettings();
     const language = getLanguage(this.db);
     const taxonomyContext = buildTaxonomyContext(this.db, language);

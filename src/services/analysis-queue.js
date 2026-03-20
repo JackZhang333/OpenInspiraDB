@@ -141,6 +141,7 @@ export class AnalysisQueue {
   }
 
   async processJob(job) {
+    this.logger.info('processJob-start', { jobId: job.id, imageId: job.image_id, jobType: job.job_type });
     this.activeJobIds.add(job.id);
 
     const startTs = nowIso();
@@ -175,22 +176,31 @@ export class AnalysisQueue {
     });
 
     try {
+      this.logger.info('processJob-executing', { jobId: job.id });
       await runWithTimeout(this.executeJob(job), this.timeoutMs);
+      this.logger.info('processJob-execute-success', { jobId: job.id });
       this.markJobSucceeded(job);
     } catch (error) {
+      this.logger.error('processJob-execute-failed', { jobId: job.id, error: error.message, code: error.code });
       this.markJobFailure(job, error);
     } finally {
       this.activeJobIds.delete(job.id);
+      this.logger.info('processJob-finished', { jobId: job.id });
     }
   }
 
   async executeJob(job) {
+    this.logger.info('executeJob-start', { jobId: job.id, imageId: job.image_id, jobType: job.job_type });
     if (job.job_type === 'refresh_embedding') {
+      this.logger.info('executeJob-refresh-embedding', { jobId: job.id, imageId: job.image_id });
       await this.aiService.refreshEmbedding(job.image_id);
+      this.logger.info('executeJob-refresh-embedding-done', { jobId: job.id });
       return;
     }
 
+    this.logger.info('executeJob-analyze-image', { jobId: job.id, imageId: job.image_id });
     await this.aiService.analyzeImage(job.image_id);
+    this.logger.info('executeJob-analyze-image-done', { jobId: job.id });
   }
 
   markJobSucceeded(job) {

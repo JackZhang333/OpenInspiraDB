@@ -1828,11 +1828,14 @@ export class InspiraDBApp {
   }
 
   async importFile(filePath, options = {}) {
+    this.logger.info('importFile-start', { filePath });
     let resolved;
 
     try {
       resolved = resolveExistingFilePath(filePath);
+      this.logger.info('importFile-path-resolved', { filePath: resolved.filePath });
     } catch (error) {
+      this.logger.error('importFile-path-resolve-failed', { filePath, error: error.message });
       return {
         status: 'skipped',
         reason: error.code || 'FILE_ACCESS_FAILED',
@@ -1840,13 +1843,20 @@ export class InspiraDBApp {
       };
     }
 
-    if (!isSupportedImageFile(resolved.filePath)) {
+    const ext = require('path').extname(resolved.filePath).toLowerCase();
+    this.logger.info('importFile-checking-format', { filePath: resolved.filePath, ext });
+
+    const isSupported = isSupportedImageFile(resolved.filePath, this.logger);
+    if (!isSupported) {
+      this.logger.warn('importFile-unsupported-format', { filePath: resolved.filePath, ext });
       return {
         status: 'skipped',
         reason: 'UNSUPPORTED_FORMAT',
         filePath: resolved.filePath,
       };
     }
+
+    this.logger.info('importFile-format-supported', { filePath: resolved.filePath, ext });
 
     if (resolved.stat.size > MAX_FILE_SIZE_BYTES) {
       return {
@@ -1904,9 +1914,15 @@ export class InspiraDBApp {
     let imageId;
 
     try {
+      this.logger.info('importFile-copying-file', { from: resolved.filePath, to: libraryPath });
       copyFile(resolved.filePath, libraryPath);
-      createThumbnailPlaceholder(libraryPath, thumbnailPath);
+      this.logger.info('importFile-file-copied', { libraryPath });
 
+      this.logger.info('importFile-creating-thumbnail', { libraryPath, thumbnailPath });
+      createThumbnailPlaceholder(libraryPath, thumbnailPath);
+      this.logger.info('importFile-thumbnail-created', { thumbnailPath });
+
+      this.logger.info('importFile-inserting-db', { fileName, md5Hash });
       this.db.transaction(() => {
         const result = this.db.run(
           `INSERT INTO images (
@@ -1997,9 +2013,12 @@ export class InspiraDBApp {
             },
           );
         } else {
+          this.logger.info('importFile-creating-analysis-job', { imageId });
           this.createAnalysisJob(imageId, { jobType: 'analyze_image', maxRetryCount: 2, asTransaction: true });
+          this.logger.info('importFile-analysis-job-created', { imageId });
         }
       });
+      this.logger.info('importFile-db-insert-complete', { imageId });
     } catch (error) {
       removeFileIfExists(libraryPath);
       removeFileIfExists(thumbnailPath);
@@ -2051,6 +2070,12 @@ export class InspiraDBApp {
     } else {
       await this.queue.drain();
     }
+
+    this.logger.info('importFile-success', {
+      imageId,
+      filePath: resolved.filePath,
+      analysisStatus: importedXmpMetadata ? IMAGE_STATUS.IMPORTED : IMAGE_STATUS.QUEUED,
+    });
 
     return {
       status: 'imported',

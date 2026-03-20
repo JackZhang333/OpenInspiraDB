@@ -8,9 +8,11 @@ export function ensureDirectories(paths) {
   }
 }
 
-export function isSupportedImageFile(filePath) {
+export function isSupportedImageFile(filePath, logger) {
   const ext = path.extname(filePath).toLowerCase();
-  return SUPPORTED_EXTENSIONS.has(ext);
+  const isSupported = SUPPORTED_EXTENSIONS.has(ext);
+  logger?.info?.('isSupportedImageFile', { filePath, ext, isSupported, supportedList: Array.from(SUPPORTED_EXTENSIONS) });
+  return isSupported;
 }
 
 export function walkFilesRecursive(folderPath) {
