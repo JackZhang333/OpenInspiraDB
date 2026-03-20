@@ -1,4 +1,6 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n/config.js';
 import {
   CheckCircle2,
   AlertCircle,
@@ -40,7 +42,7 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function getImportProgressSnapshot(importing, importProgress) {
+function getImportProgressSnapshot(importing, importProgress, t) {
   if (!importing || !importProgress) {
     return {
       determinate: false,
@@ -56,7 +58,7 @@ function getImportProgressSnapshot(importing, importProgress) {
       determinate: true,
       ratio: 1,
       label: '100%',
-      phaseLabel: '已完成',
+      phaseLabel: t ? t('sidebar.completed') : '已完成',
     };
   }
 
@@ -72,10 +74,10 @@ function getImportProgressSnapshot(importing, importProgress) {
     const displayRatio = importProgress.mode === 'folder' ? ratio : baseRatio;
 
     const phaseLabel = phase === 'analyzing'
-      ? '分析中'
+      ? t ? t('sidebar.aiAnalyzing') : '分析中'
       : phase === 'importing'
-        ? '导入中'
-        : '处理中';
+        ? t ? t('sidebar.importing') : '导入中'
+        : t ? t('sidebar.processing') : '处理中';
 
     return {
       determinate: true,
@@ -88,13 +90,13 @@ function getImportProgressSnapshot(importing, importProgress) {
   return {
     determinate: false,
     ratio: 0,
-    label: '处理中',
-    phaseLabel: '处理中',
+    label: t ? t('sidebar.processing') : '处理中',
+    phaseLabel: t ? t('sidebar.processing') : '处理中',
   };
 }
 
-function ImportProgressRing({ importing, importProgress }) {
-  const snapshot = getImportProgressSnapshot(importing, importProgress);
+function ImportProgressRing({ importing, importProgress, t }) {
+  const snapshot = getImportProgressSnapshot(importing, importProgress, t);
   const size = 24;
   const stroke = 2;
   const radius = (size - stroke) / 2;
@@ -178,67 +180,70 @@ function isDraftId(value) {
   return typeof value === 'string' && value.startsWith('draft-');
 }
 
-function formatOrganizationCadence(status) {
+function formatOrganizationCadence(status, t) {
   if (!status?.lastOrganizedAt) {
-    return '还没有整理记录，建议现在跑一次 AI 整理。';
+    return t('sidebar.organization.noRecord');
   }
 
   if (typeof status.daysSinceLastOrganization !== 'number') {
-    return '已记录上次整理时间。';
+    return t('sidebar.organization.hasRecord');
   }
 
   return status.recommended
-    ? `距上次整理已 ${status.daysSinceLastOrganization} 天，建议重新整理。`
-    : `距上次整理 ${status.daysSinceLastOrganization} 天，当前无需频繁整理。`;
+    ? t('sidebar.organization.recommended', { days: status.daysSinceLastOrganization })
+    : t('sidebar.organization.notNeeded', { days: status.daysSinceLastOrganization });
 }
 
-const ORGANIZATION_GROUP_LABELS = {
-  create: '新增',
-  rename: '重命名',
-  merge: '合并',
-  move: '移动',
-  delete: '删除',
-};
+function getOrganizationGroupLabel(kind, t) {
+  const labels = {
+    create: t('sidebar.operations.create'),
+    rename: t('sidebar.operations.renameShort'),
+    merge: t('sidebar.operations.mergeShort'),
+    move: t('sidebar.operations.moveShort'),
+    delete: t('sidebar.operations.deleteShort'),
+  };
+  return labels[kind] || kind;
+}
 
-function renderOrganizationOperationTitle(operation) {
+function renderOrganizationOperationTitle(operation, t) {
   if (operation.kind === 'create') {
     return operation.level === 1
-      ? `新增一级分类「${operation.name}」`
+      ? t('sidebar.operations.createParent', { name: operation.name })
       : operation.sourceName
-        ? `从「${operation.sourceName}」派生新增标签「${operation.name}」`
-        : `新增标签「${operation.name}」到「${operation.parentName}」`;
+        ? t('sidebar.operations.createFrom', { sourceName: operation.sourceName, name: operation.name })
+        : t('sidebar.operations.createTo', { name: operation.name, parentName: operation.parentName });
   }
 
   if (operation.kind === 'rename') {
-    return `将「${operation.currentName || operation.tagId}」改成「${operation.nextName}」`;
+    return t('sidebar.operations.rename', { currentName: operation.currentName || operation.tagId, nextName: operation.nextName });
   }
 
   if (operation.kind === 'merge') {
-    return `将「${operation.currentName || operation.sourceTagId}」合并到「${operation.targetTagName}」`;
+    return t('sidebar.operations.merge', { currentName: operation.currentName || operation.sourceTagId, targetName: operation.targetTagName });
   }
 
   if (operation.kind === 'move') {
-    return `将「${operation.currentName || operation.tagId}」移动到「${operation.targetParentName}」`;
+    return t('sidebar.operations.move', { currentName: operation.currentName || operation.tagId, targetName: operation.targetParentName });
   }
 
   return operation.replacementTargetNames?.length
-    ? `删除「${operation.currentName || operation.tagId}」，替换为「${operation.replacementTargetNames.join(' / ')}」`
-    : `删除「${operation.currentName || operation.tagId}」`;
+    ? t('sidebar.operations.deleteReplace', { currentName: operation.currentName || operation.tagId, replacements: operation.replacementTargetNames.join(' / ') })
+    : t('sidebar.operations.delete', { currentName: operation.currentName || operation.tagId });
 }
 
-function renderOrganizationOperationMeta(operation) {
-  const details = [operation.reason || 'AI 建议'];
+function renderOrganizationOperationMeta(operation, t) {
+  const details = [operation.reason || t('sidebar.operations.aiSuggestion')];
 
   if (typeof operation.affectedUsageCount === 'number') {
-    details.push(`引用 ${operation.affectedUsageCount} 次`);
+    details.push(t('sidebar.operations.usageCount', { count: operation.affectedUsageCount }));
   }
 
   if (operation.kind === 'create' && operation.sourceParentName) {
-    details.push(`来源分类「${operation.sourceParentName}」`);
+    details.push(t('sidebar.operations.sourceFrom', { name: operation.sourceParentName }));
   }
 
   if (operation.kind === 'delete' && operation.replacementTargetNames?.length) {
-    details.push(`替代标签 ${operation.replacementTargetNames.join(' / ')}`);
+    details.push(t('sidebar.operations.replacements', { names: operation.replacementTargetNames.join(' / ') }));
   }
 
   return details.join(' · ');
@@ -264,6 +269,7 @@ export function TagSettingsDialog({
   onPreviewOrganization,
   onApplyOrganizationPlan,
 }) {
+  const { t } = useTranslation();
   const initialTreeRef = React.useRef([]);
   const [draftGroups, setDraftGroups] = React.useState([]);
   const [newParentName, setNewParentName] = React.useState('');
@@ -323,7 +329,7 @@ export function TagSettingsDialog({
   };
 
   const handleAddParent = () => {
-    const name = newParentName.trim() || '新一级分类';
+    const name = newParentName.trim() || t('sidebar.newParentDefault');
     setDraftGroups((currentGroups) => [
       ...currentGroups,
       {
@@ -342,7 +348,7 @@ export function TagSettingsDialog({
     const usageCount = Number(group?.usageCount || 0);
     if (usageCount > 0) {
       const confirmed = confirmTagDeletion(
-        `一级分类「${group.name}」下当前还有 ${usageCount} 个生效图片标签关联，删除后会同时删除其下二级标签及关联。确定继续吗？`,
+        t('sidebar.confirmDeleteParentWithUsage', { name: group.name, count: usageCount }),
       );
       if (!confirmed) {
         return;
@@ -380,7 +386,7 @@ export function TagSettingsDialog({
     const usageCount = Number(child?.usageCount || 0);
     if (usageCount > 0) {
       const confirmed = confirmTagDeletion(
-        `二级标签「${child.name}」当前还有 ${usageCount} 个生效图片标签关联，删除后会同步移除这些图片上的该标签。确定继续吗？`,
+        t('sidebar.confirmDeleteChildWithUsage', { name: child.name, count: usageCount }),
       );
       if (!confirmed) {
         return;
@@ -453,7 +459,7 @@ export function TagSettingsDialog({
       .filter((group) => group.name);
 
     if (!sanitizedGroups.length) {
-      setLocalError('至少保留一个一级分类后再保存。');
+      setLocalError(t('sidebar.errors.keepOneParent'));
       return;
     }
 
@@ -549,7 +555,7 @@ export function TagSettingsDialog({
         });
       }
     } catch (error) {
-      setLocalError(String(error?.message || error || 'AI 整理预览生成失败'));
+      setLocalError(String(error?.message || error || t('sidebar.errors.previewFailed')));
     } finally {
       setOrganizationLoading(false);
     }
@@ -603,7 +609,7 @@ export function TagSettingsDialog({
         recommended: Boolean(result?.recommended),
       });
     } catch (error) {
-      setLocalError(String(error?.message || error || 'AI 整理应用失败'));
+      setLocalError(String(error?.message || error || t('sidebar.errors.applyFailed')));
     } finally {
       setOrganizationApplying(false);
     }
@@ -614,8 +620,8 @@ export function TagSettingsDialog({
       <div className="flex max-h-[88vh] w-full max-w-[1080px] flex-col overflow-hidden rounded-[28px] border border-clay/15 bg-[#f7faf4] shadow-[0_28px_80px_rgba(16,24,20,0.22)]">
         <div className="flex items-center justify-between border-b border-clay/10 bg-white/80 px-8 py-6">
           <div>
-            <div className="text-[24px] font-bold tracking-tight text-ink">标签管理台</div>
-            <div className="mt-1 text-sm text-ink/45">在这里整理一级分类和二级标签，最后统一提交保存。</div>
+            <div className="text-[24px] font-bold tracking-tight text-ink">{t('sidebar.tagManagement')}</div>
+            <div className="mt-1 text-sm text-ink/45">{t('sidebar.tagManagementDesc')}</div>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -630,12 +636,12 @@ export function TagSettingsDialog({
 
         <div className="flex-1 overflow-auto bg-[#f1f6ed] px-8 py-7">
           <div className="mb-6 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-white/80 p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">一级标签</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/35">{t('sidebar.parentTags')}</div>
             <div className="flex flex-col gap-3 md:flex-row">
               <Input
                 value={newParentName}
                 onChange={(event) => setNewParentName(event.target.value)}
-                placeholder="例如：项目类型"
+                placeholder={t('sidebar.parentTagPlaceholder')}
                 className="h-12 w-48 rounded-2xl border-white/80 bg-[#f6faf2]"
               />
               <Button
@@ -644,7 +650,7 @@ export function TagSettingsDialog({
                 onClick={handleAddParent}
               >
                 <Plus className="mr-1.5 h-4 w-4" />
-                添加一级
+                {t('sidebar.addParent')}
               </Button>
             </div>
           </div>
@@ -678,10 +684,10 @@ export function TagSettingsDialog({
                         )}
                       />
                       {group.isSystem ? (
-                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] text-ink/45">系统</span>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] text-ink/45">{t('sidebar.system')}</span>
                       ) : null}
                     </div>
-                    <div className="text-xs text-ink/40">{group.children.length} 个标签</div>
+                    <div className="text-xs text-ink/40">{t('sidebar.tagCount', { count: group.children.length })}</div>
                   </div>
 
                   {!group.isSystem ? (
@@ -691,7 +697,7 @@ export function TagSettingsDialog({
                       className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      删除一级分类
+                      {t('sidebar.deleteParent')}
                     </button>
                   ) : null}
                 </div>
@@ -721,7 +727,7 @@ export function TagSettingsDialog({
                           className="max-w-[80px] rounded-full border border-clay/15 bg-[#f6faf2] px-2 py-1 text-[11px] font-medium text-ink/60 focus:outline-none focus:ring-1 focus:ring-moss/30"
                         >
                           {draftGroups.map((optionGroup) => (
-                            <option key={optionGroup.id} value={optionGroup.id}>{optionGroup.name || '未命名分类'}</option>
+                            <option key={optionGroup.id} value={optionGroup.id}>{optionGroup.name || t('sidebar.unnamedGroup')}</option>
                           ))}
                         </select>
                         {!isUncategorized && (
@@ -751,7 +757,7 @@ export function TagSettingsDialog({
                             handleAddChild(group.id);
                           }
                         }}
-                        placeholder="添加标签"
+                        placeholder={t('sidebar.addChild')}
                         className="min-w-[80px] flex-1 border-0 bg-transparent p-0 text-sm text-ink placeholder:text-ink/35 focus:outline-none"
                       />
                       <button
@@ -759,7 +765,7 @@ export function TagSettingsDialog({
                         onClick={() => handleAddChild(group.id)}
                         className="rounded-full bg-moss px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-moss/90"
                       >
-                        新增
+                        {t('sidebar.add')}
                       </button>
                     </div>
                     )}
@@ -774,7 +780,7 @@ export function TagSettingsDialog({
         <div className="flex items-center justify-between border-t border-clay/10 bg-white/85 px-8 py-5">
           <div className="flex items-center gap-2 text-xs text-ink/45">
             <Save className="h-4 w-4 text-moss" />
-            <span>修改会在点击“保存修改”后统一提交。</span>
+            <span>{t('sidebar.saveHint')}</span>
           </div>
           <div className="flex items-center gap-3">
             {localError ? (
@@ -785,7 +791,7 @@ export function TagSettingsDialog({
               onClick={onClose}
               className="rounded-2xl px-5 py-3 text-sm font-semibold text-ink/55 transition hover:bg-clay/10 hover:text-ink/80"
             >
-              取消
+              {t('common.cancel')}
             </button>
             <Button
               type="button"
@@ -794,7 +800,7 @@ export function TagSettingsDialog({
               className="h-12 rounded-2xl px-6"
             >
               <Save className="mr-1.5 h-4 w-4" />
-              {saving ? '保存中...' : '保存'}
+              {saving ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -823,6 +829,7 @@ export function AppSidebar({
   onFilterModeChange,
   onOpenTagSettings,
 }) {
+  const { t } = useTranslation();
   const selectedSet = React.useMemo(
     () => new Set((selectedTagIds || []).map((id) => Number(id))),
     [selectedTagIds],
@@ -835,7 +842,7 @@ export function AppSidebar({
     () => filterSidebarTagTree(availableTags, selectedTagIds),
     [availableTags, selectedTagIds],
   );
-  const progress = getImportProgressSnapshot(importing, importProgress);
+  const progress = getImportProgressSnapshot(importing, importProgress, t);
   const total = Number(importProgress?.total || 0);
   const current = Number(importProgress?.current || 0);
   const isBatchImporting = importing && importProgress?.mode === 'folder';
@@ -862,7 +869,7 @@ export function AppSidebar({
         {!collapsed ? (
           <div className="flex items-center gap-2">
             <LogoIcon size={28} />
-            <span className="bg-gradient-to-r from-moss to-moss/70 bg-clip-text text-[17px] font-bold tracking-tight text-transparent">意图集</span>
+            <span className="bg-gradient-to-r from-moss to-moss/70 bg-clip-text text-[17px] font-bold tracking-tight text-transparent">{t('sidebar.title')}</span>
           </div>
         ) : (
           <LogoIcon size={24} />
@@ -883,9 +890,9 @@ export function AppSidebar({
           </div>
 
           <div className="relative flex items-center gap-2.5">
-            <ImportProgressRing importing={importing} importProgress={importProgress} />
+             <ImportProgressRing importing={importing} importProgress={importProgress} t={t} />
             {!collapsed && (
-              <span className="text-[13px] font-medium">导入图片</span>
+              <span className="text-[13px] font-medium">{t('sidebar.import')}</span>
             )}
           </div>
 
@@ -908,7 +915,7 @@ export function AppSidebar({
             )}
           >
             <FolderOpen className="h-3.5 w-3.5 flex-shrink-0" />
-            {!collapsed && <span className="truncate">批量导入</span>}
+            {!collapsed && <span className="truncate">{t('sidebar.importFolder')}</span>}
           </button>
 
           <button
@@ -920,7 +927,7 @@ export function AppSidebar({
             )}
           >
             <Download className="h-3.5 w-3.5 flex-shrink-0" />
-            {!collapsed && <span className="truncate">批量导出</span>}
+            {!collapsed && <span className="truncate">{t('sidebar.exportBatch')}</span>}
           </button>
         </div>
 
@@ -954,7 +961,7 @@ export function AppSidebar({
                   {phase === 'completed' && <CheckCircle2 className="h-3 w-3 text-moss" />}
                   {phase === 'importing' && <div className="h-3 w-3 rounded-full bg-moss/60" />}
                   <span className="text-[11px] font-medium text-ink/70">
-                    {phase === 'importing' ? '导入文件' : phase === 'analyzing' ? 'AI分析中' : '已完成'}
+                    {phase === 'importing' ? t('sidebar.importingStatus', { current, total }) : phase === 'analyzing' ? t('sidebar.aiAnalyzing') : t('sidebar.completed')}
                   </span>
                 </div>
                 <span className="text-[11px] font-bold text-moss">{progressText}</span>
@@ -1021,7 +1028,7 @@ export function AppSidebar({
             <div className="flex items-center justify-between border-b border-clay/10 px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <Tags className="h-3.5 w-3.5 text-ink/40" />
-                <span className="text-[12px] font-medium text-ink/60">二级标签</span>
+                <span className="text-[12px] font-medium text-ink/60">{t('sidebar.tags')}</span>
               </div>
               <div className="flex items-center gap-1">
                 {!!selectedTags?.length && (
@@ -1030,7 +1037,7 @@ export function AppSidebar({
                     className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink/40 hover:bg-clay/10 hover:text-ink/70"
                   >
                     <X className="h-3 w-3" />
-                    清空
+                    {t('sidebar.clearAll')}
                   </button>
                 )}
                 <button
@@ -1038,7 +1045,7 @@ export function AppSidebar({
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink/40 hover:bg-clay/10 hover:text-ink/70"
                 >
                   <Settings2 className="h-3.5 w-3.5" />
-                  设置
+                  {t('sidebar.tagSettings')}
                 </button>
               </div>
             </div>
@@ -1046,7 +1053,7 @@ export function AppSidebar({
             <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
               {visibleTags.length === 0 ? (
                 <div className="px-3 py-4 text-center text-[12px] text-ink/30">
-                  暂无标签
+                  {t('sidebar.noTags')}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1067,7 +1074,7 @@ export function AppSidebar({
                             )}
                             <div>
                               <div className="text-[13px] font-medium text-ink/75">{group.name}</div>
-                              <div className="text-[10px] text-ink/35">{group.count || 0} 张</div>
+                              <div className="text-[10px] text-ink/35">{t('sidebar.imageCount', { count: group.count || 0 })}</div>
                             </div>
                           </div>
                           <span className="rounded-md bg-clay/10 px-1.5 py-0.5 text-[10px] text-ink/40">
@@ -1128,8 +1135,8 @@ export function AppSidebar({
 
             <div className="border-t border-clay/10 px-3 py-3">
               <div className="mb-2 flex items-center justify-between text-[11px] text-ink/45">
-                <span>已选 {selectedTags?.length || 0} 个标签</span>
-                <span>{filterMode === 'or' ? '任意命中' : '全部命中'}</span>
+                <span>{t('sidebar.selectedCount', { count: selectedTags?.length || 0 })}</span>
+                <span>{filterMode === 'or' ? t('sidebar.filterMode.orShort') : t('sidebar.filterMode.andShort')}</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -1142,7 +1149,7 @@ export function AppSidebar({
                       : 'bg-white text-ink/60 ring-1 ring-clay/20 hover:text-ink/80',
                   )}
                 >
-                  全部（AND）
+                  {t('sidebar.filterMode.and')}
                 </button>
                 <button
                   type="button"
@@ -1154,7 +1161,7 @@ export function AppSidebar({
                       : 'bg-white text-ink/60 ring-1 ring-clay/20 hover:text-ink/80',
                   )}
                 >
-                  任意（OR）
+                  {t('sidebar.filterMode.or')}
                 </button>
               </div>
             </div>
@@ -1175,7 +1182,7 @@ export function AppSidebar({
             <button
               onClick={onOpenTagSettings}
               className="mt-auto rounded-lg p-2 text-ink/35 transition hover:bg-white/60 hover:text-ink/65"
-              title="标签设置"
+              title={t('sidebar.tagSettings')}
             >
               <Settings2 className="h-4 w-4" />
             </button>
@@ -1185,10 +1192,28 @@ export function AppSidebar({
 
       <div className={cn('border-t border-clay/20', collapsed ? 'p-2' : 'p-3')}>
         {!collapsed ? (
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={async () => {
+                const newLang = i18n.language === 'zh-CN' ? 'en' : 'zh-CN';
+                i18n.changeLanguage(newLang);
+                localStorage.setItem('language', newLang);
+                // 保存语言设置到后端数据库
+                try {
+                  await window.inspira?.setSetting?.('language', newLang);
+                } catch {
+                  // 忽略保存失败
+                }
+              }}
+              className="flex h-8 items-center justify-center rounded-lg px-2 text-[11px] font-medium text-ink/50 transition hover:bg-white/60 hover:text-ink/80"
+              title={t('sidebar.switchLanguage')}
+            >
+              {i18n.language === 'zh-CN' ? '中文' : 'EN'}
+            </button>
             <button
               onClick={onToggleCollapse}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-white/60 hover:text-ink/70"
+              title={t('sidebar.collapse')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />
@@ -1196,10 +1221,28 @@ export function AppSidebar({
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={async () => {
+                const newLang = i18n.language === 'zh-CN' ? 'en' : 'zh-CN';
+                i18n.changeLanguage(newLang);
+                localStorage.setItem('language', newLang);
+                // 保存语言设置到后端数据库
+                try {
+                  await window.inspira?.setSetting?.('language', newLang);
+                } catch {
+                  // 忽略保存失败
+                }
+              }}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-medium text-ink/50 transition hover:bg-white/60 hover:text-ink/80"
+              title={t('sidebar.switchLanguage')}
+            >
+              {i18n.language === 'zh-CN' ? '中' : 'EN'}
+            </button>
             <button
               onClick={onToggleCollapse}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-white/60 hover:text-ink/70"
+              title={t('sidebar.expand')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />

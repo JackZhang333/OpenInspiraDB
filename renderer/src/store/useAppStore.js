@@ -1,27 +1,31 @@
 import { create } from 'zustand';
+import i18n from '../i18n/config.js';
 
-const ERROR_MESSAGES = {
-  EMPTY_CAPTION: '描述不能为空',
-  EMPTY_TAG_NAME: '标签名称不能为空',
-  IMAGE_NOT_FOUND: '图片不存在，可能已被删除',
-  TAG_NOT_FOUND: '标签不存在或已被删除',
-  TAG_LEVEL_INVALID: '只能选择二级标签',
-  TAG_ALREADY_EXISTS: '标签名称已存在',
-  PARENT_TAG_NOT_FOUND: '父标签不存在',
-  SYSTEM_TAG_LOCKED: '系统标签不可修改',
-  TAG_HAS_CHILDREN: '请先删除或移动该一级标签下的二级标签',
-  TAG_IN_USE: '该标签仍被图片使用，暂时不能删除',
-  TARGET_TAG_NOT_FOUND: '目标标签不存在，整理方案已过期，请重新生成',
-  EMPTY_EXPORT_SELECTION: '当前列表没有可导出的图片',
-  EXPORT_PATH_REQUIRED: '导出路径不能为空',
-  COPY_IMAGE_FAILED: '当前图片暂时无法复制，请改用导出后再粘贴',
-  IMAGE_FILE_MISSING: '图片原文件不存在，可能已被移动或删除',
-  IMAGE_LIMIT_REACHED: '已达到产品性能极限 5 万张，有扩容需求请联系开发者',
-  DESKTOP_BRIDGE_OUTDATED: '客户端桥接未更新，请重启应用后再试',
-  DESKTOP_BRIDGE_UNAVAILABLE: '桌面桥接未就绪，请重启应用后再试',
-  ZHIPU_API_KEY_MISSING: '请先在 src/model-config.js 或 ZHIPU_API_KEY 环境变量中配置智谱 API Key',
-  ZHIPU_API_REQUEST_FAILED: '智谱接口请求失败，请检查 API Key、网络或模型权限',
-  ZHIPU_EMBEDDING_EMPTY: '智谱 embeddings 返回为空，请稍后重试',
+const getErrorMessageKey = (code) => {
+  const keyMap = {
+    EMPTY_CAPTION: 'errors.emptyCaption',
+    EMPTY_TAG_NAME: 'errors.emptyTagName',
+    IMAGE_NOT_FOUND: 'errors.imageNotFound',
+    TAG_NOT_FOUND: 'errors.tagNotFound',
+    TAG_LEVEL_INVALID: 'errors.tagLevelInvalid',
+    TAG_ALREADY_EXISTS: 'errors.tagAlreadyExists',
+    PARENT_TAG_NOT_FOUND: 'errors.parentTagNotFound',
+    SYSTEM_TAG_LOCKED: 'errors.systemTagLocked',
+    TAG_HAS_CHILDREN: 'errors.tagHasChildren',
+    TAG_IN_USE: 'errors.tagInUse',
+    TARGET_TAG_NOT_FOUND: 'errors.targetTagNotFound',
+    EMPTY_EXPORT_SELECTION: 'errors.emptyExportSelection',
+    EXPORT_PATH_REQUIRED: 'errors.exportPathRequired',
+    COPY_IMAGE_FAILED: 'errors.copyImageFailed',
+    IMAGE_FILE_MISSING: 'errors.imageFileMissing',
+    IMAGE_LIMIT_REACHED: 'errors.imageLimitReached',
+    DESKTOP_BRIDGE_OUTDATED: 'errors.desktopBridgeOutdated',
+    DESKTOP_BRIDGE_UNAVAILABLE: 'errors.desktopBridgeUnavailable',
+    ZHIPU_API_KEY_MISSING: 'errors.zhipuApiKeyMissing',
+    ZHIPU_API_REQUEST_FAILED: 'errors.zhipuApiRequestFailed',
+    ZHIPU_EMBEDDING_EMPTY: 'errors.zhipuEmbeddingEmpty',
+  };
+  return keyMap[code] || null;
 };
 
 function getBridge() {
@@ -71,12 +75,13 @@ function getErrorKey(error) {
 
 function getErrorMessage(error) {
   const errorKey = getErrorKey(error);
-  if (errorKey && ERROR_MESSAGES[errorKey]) {
-    return ERROR_MESSAGES[errorKey];
+  const i18nKey = getErrorMessageKey(errorKey);
+  if (i18nKey && i18n.exists(i18nKey)) {
+    return i18n.t(i18nKey);
   }
 
   if (!error) {
-    return '未知错误';
+    return i18n.t('errors.unknown');
   }
 
   if (typeof error === 'string') {
@@ -87,7 +92,7 @@ function getErrorMessage(error) {
     return error.message;
   }
 
-  return '请求失败';
+  return i18n.t('errors.requestFailed');
 }
 
 function normalizeMode(mode) {
@@ -571,7 +576,7 @@ export const useAppStore = create((set, get) => ({
       await get().reloadSelectedDetail();
       set({
         reanalyzing: false,
-        error: result?.status === 'failed' ? '重新分析失败，请稍后重试' : null,
+        error: result?.status === 'failed' ? i18n.t('errors.reanalyzeFailed') : null,
       });
       return result;
     } catch (error) {

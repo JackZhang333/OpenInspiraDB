@@ -377,6 +377,14 @@ function registerIpcHandlers() {
     return inspiraApp.setTagFilterMode(mode);
   });
 
+  ipcMain.handle('inspiradb:get-setting', (_, key, fallback) => {
+    return inspiraApp.getSetting(key, fallback);
+  });
+
+  ipcMain.handle('inspiradb:set-setting', (_, key, value) => {
+    return inspiraApp.setSetting(key, value);
+  });
+
 }
 
 app.whenReady().then(() => {

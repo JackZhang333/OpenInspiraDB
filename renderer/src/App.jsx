@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from './lib/utils.js';
 import { useAppStore } from './store/useAppStore.js';
 import { AppSidebar, TagSettingsDialog } from './components/AppSidebar.jsx';
@@ -7,6 +8,7 @@ import { LibraryWorkspace } from './components/LibraryWorkspace.jsx';
 import { DetailPanel } from './components/DetailPanel.jsx';
 
 export default function App() {
+  const { t } = useTranslation();
   const {
     query,
     selectedTagIds,
@@ -85,7 +87,12 @@ export default function App() {
 
   return (
     <main className="h-screen overflow-hidden bg-transparent">
-      <div className={cn('relative grid h-full w-full gap-0 overflow-hidden transition-[grid-template-columns] duration-300', shellGridClass)}>
+      {/* 窗口拖动区域 - macOS 标题栏高度 28px，默认透明，hover时显示 */}
+      <div
+        className="fixed left-0 right-0 top-0 z-50 h-7 w-full bg-black/0 transition-colors duration-200 hover:bg-black/5"
+        style={{ WebkitAppRegion: 'drag' }}
+      />
+      <div className={cn('relative grid h-full w-full gap-0 overflow-hidden pt-7 transition-[grid-template-columns] duration-300', shellGridClass)}>
         <div className="min-h-0">
           <AppSidebar
             collapsed={sidebarCollapsed}
@@ -154,13 +161,13 @@ export default function App() {
             <div className="flex h-full min-h-0 flex-col border-0 bg-transparent shadow-none">
               <div className="flex items-center justify-between border-b border-clay/10 bg-white/50 px-6 py-5 backdrop-blur-sm">
                 <div className="space-y-1">
-                  <h2 className="text-[22px] font-bold tracking-tight text-ink">详情</h2>
+                  <h2 className="text-[22px] font-bold tracking-tight text-ink">{t('app.detail')}</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => selectImage(null)}
                   className="flex h-10 w-10 items-center justify-center rounded-full border border-clay/10 bg-white text-ink/40 shadow-sm transition-all hover:bg-rose-50 hover:text-rose-500 hover:ring-2 hover:ring-rose-200"
-                  aria-label="关闭详情"
+                  aria-label={t('app.closeDetail')}
                 >
                   <X className="h-5 w-5" />
                 </button>

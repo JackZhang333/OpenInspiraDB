@@ -81,4 +81,10 @@ contextBridge.exposeInMainWorld('inspira', {
   setTagFilterMode(mode) {
     return ipcRenderer.invoke('inspiradb:set-tag-filter-mode', mode);
   },
+  getSetting(key, fallback) {
+    return ipcRenderer.invoke('inspiradb:get-setting', key, fallback);
+  },
+  setSetting(key, value) {
+    return ipcRenderer.invoke('inspiradb:set-setting', key, value);
+  },
 });

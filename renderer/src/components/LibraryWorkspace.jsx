@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Loader2, RefreshCcw, Search, Sparkles, X } from 'lucide-react';
 import { Badge } from './ui/badge.jsx';
 import { GalleryCard, GalleryCardSkeleton } from './GalleryCard.jsx';
@@ -19,6 +20,7 @@ export function LibraryWorkspace({
   hasMore = false,
   onLoadMore,
 }) {
+  const { t } = useTranslation();
   const hasTagFilter = Boolean(selectedTags?.length);
   const [columnCount, setColumnCount] = useState(5);
   const [hoveredCardId, setHoveredCardId] = useState(null);
@@ -126,7 +128,7 @@ export function LibraryWorkspace({
                 }
               }}
               className="h-12 w-full rounded-xl border-0 bg-white pl-11 pr-4 text-[15px] text-ink shadow-sm ring-1 ring-clay/20 placeholder:text-ink/30 focus:ring-2 focus:ring-moss/30"
-              placeholder="输入描述性关键词，语义搜索..."
+              placeholder={t('workspace.searchPlaceholder')}
             />
             {queryDraft ? (
               <button
@@ -148,24 +150,24 @@ export function LibraryWorkspace({
 
         {!queryDraft && !hasTagFilter ? (
           <div className="mx-auto mt-3 flex max-w-2xl items-center gap-2 text-[11px] text-ink/60">
-            <span>试试：</span>
+            <span>{t('workspace.try')}</span>
             <button
-              onClick={() => onQueryDraftChange('阳光明媚的海滩')}
+              onClick={() => onQueryDraftChange(t('workspace.suggestion1'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
-              阳光明媚的海滩
+              {t('workspace.suggestion1')}
             </button>
             <button
-              onClick={() => onQueryDraftChange('科技感产品图')}
+              onClick={() => onQueryDraftChange(t('workspace.suggestion2'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
-              科技感产品图
+              {t('workspace.suggestion2')}
             </button>
             <button
-              onClick={() => onQueryDraftChange('温暖的室内')}
+              onClick={() => onQueryDraftChange(t('workspace.suggestion3'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
-              温暖的室内
+              {t('workspace.suggestion3')}
             </button>
           </div>
         ) : null}
@@ -175,7 +177,7 @@ export function LibraryWorkspace({
         {selectedTags?.length ? (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="bg-clay/15 text-ink/70">
-              {filterMode === 'or' ? '任意（OR）' : '全部（AND）'}
+              {filterMode === 'or' ? t('sidebar.filterMode.or') : t('sidebar.filterMode.and')}
             </Badge>
             {selectedTags.map((tag) => (
               <button
@@ -192,7 +194,7 @@ export function LibraryWorkspace({
               onClick={onClearTags}
               className="text-xs text-ink/40 transition hover:text-ink/70"
             >
-              清空
+              {t('sidebar.clearAll')}
             </button>
           </div>
         ) : null}
@@ -217,8 +219,8 @@ export function LibraryWorkspace({
               <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-clay/10">
                 <Search className="h-6 w-6 text-ink/20" />
               </div>
-              <p className="text-sm text-ink/40">暂无结果</p>
-              <p className="mt-1 text-xs text-ink/30">尝试语义描述或从左侧选择二级标签</p>
+              <p className="text-sm text-ink/40">{t('workspace.noResults')}</p>
+              <p className="mt-1 text-xs text-ink/30">{t('workspace.trySemanticSearch')}</p>
             </div>
           </div>
         )}
@@ -250,7 +252,7 @@ export function LibraryWorkspace({
               <div ref={loadMoreRef} className="flex items-center justify-center py-6">
                 <div className="flex items-center gap-2 text-sm text-ink/40">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>加载更多...</span>
+                  <span>{t('workspace.loadMore')}</span>
                 </div>
               </div>
             )}
@@ -259,14 +261,14 @@ export function LibraryWorkspace({
               <div className="flex items-center justify-center py-4">
                 <div className="flex items-center gap-2 text-sm text-ink/40">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>加载中...</span>
+                  <span>{t('workspace.loading')}</span>
                 </div>
               </div>
             )}
 
             {!hasMore && result.items.length > 0 && (
               <div className="flex items-center justify-center py-6 text-xs text-ink/30">
-                已加载全部 {result.total} 张图片
+                {t('workspace.allLoaded', { total: result.total })}
               </div>
             )}
           </div>
