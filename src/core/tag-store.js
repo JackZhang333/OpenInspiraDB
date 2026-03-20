@@ -8,7 +8,7 @@ export const UNCATEGORIZED_TAG_NAME = '未分组';
 
 export const PRESET_TAXONOMY = [
   {
-    name: '行业 / 用途',
+    name: '行业用途',
     children: [
       '电商', '品牌', 'UI', '海报', '包装', 'LOGO', '画册', 'PPT', '网页', '公众号',
       '短视频', '直播', 'Banner', '主图', '详情页', '易拉宝', '展架', '名片', '折页', '菜单',
@@ -37,7 +37,7 @@ export const PRESET_TAXONOMY = [
     ],
   },
   {
-    name: '构图 / 形式',
+    name: '构图形式',
     children: [
       '居中', '左右分屏', '上下分屏', '满版', '留白', '对称', '不对称', '网格', '放射', '环绕',
       '叠加', '穿插', '俯视', '平视', '仰视', '特写', '全景', '横版', '竖版', '方版',
@@ -45,7 +45,7 @@ export const PRESET_TAXONOMY = [
     ],
   },
   {
-    name: '情绪 / 氛围',
+    name: '情绪氛围',
     children: [
       '高级', '简约', '热闹', '喜庆', '严肃', '活泼', '轻松', '治愈', '神秘', '科技感',
       '未来感', '复古感', '文艺感', '商务感', '轻奢感', '国潮感', '可爱', '大气感', '精致', '粗糙',
@@ -55,7 +55,7 @@ export const PRESET_TAXONOMY = [
 
 export const PRESET_TAXONOMY_EN = [
   {
-    name: 'Industry / Usage',
+    name: 'Industry Usage',
     children: [
       'E-commerce', 'Brand', 'UI', 'Poster', 'Packaging', 'Logo', 'Brochure', 'PPT', 'Web', 'Social',
       'Short Video', 'Live Stream', 'Banner', 'Main Image', 'Detail Page', 'Roll-up', 'Display',
@@ -88,7 +88,7 @@ export const PRESET_TAXONOMY_EN = [
     ],
   },
   {
-    name: 'Composition / Form',
+    name: 'Composition Form',
     children: [
       'Centered', 'Left-Right Split', 'Top-Bottom Split', 'Full Bleed', 'White Space',
       'Symmetrical', 'Asymmetrical', 'Grid', 'Radial', 'Surrounding', 'Overlay', 'Interleaved',
@@ -98,7 +98,7 @@ export const PRESET_TAXONOMY_EN = [
     ],
   },
   {
-    name: 'Mood / Atmosphere',
+    name: 'Mood Atmosphere',
     children: [
       'Premium', 'Simple', 'Lively', 'Festive', 'Serious', 'Playful', 'Relaxed', 'Healing',
       'Mysterious', 'Tech-savvy', 'Futuristic', 'Nostalgic', 'Artistic', 'Business-like',
