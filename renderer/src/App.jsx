@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, WifiOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from './lib/utils.js';
 import { useAppStore } from './store/useAppStore.js';
@@ -58,6 +58,29 @@ export default function App() {
   const [queryDraft, setQueryDraft] = useState(query);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tagSettingsOpen, setTagSettingsOpen] = useState(false);
+
+  // 网络状态检测
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showOfflineAlert, setShowOfflineAlert] = useState(false);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setShowOfflineAlert(false);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setShowOfflineAlert(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     init();
@@ -120,6 +143,28 @@ export default function App() {
           {error ? (
             <div className="border-b border-rose-200 bg-rose-50/90 px-5 py-3 text-sm text-rose-700">
               {error}
+            </div>
+          ) : null}
+
+          {showOfflineAlert ? (
+            <div className="border-b border-amber-200 bg-amber-50/90 px-5 py-3">
+              <div className="flex items-start gap-3">
+                <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div className="flex-1 text-sm text-amber-800">
+                  <p className="font-medium">当前处于离线状态</p>
+                  <p className="mt-1 text-amber-700/80">
+                    普通搜索和标签筛选可正常使用，语义搜索和智能解析图片功能暂不可用。请连接网络后刷新页面。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowOfflineAlert(false)}
+                  className="shrink-0 rounded p-1 text-amber-600/60 transition-colors hover:bg-amber-100 hover:text-amber-700"
+                  aria-label="关闭提示"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           ) : null}
 

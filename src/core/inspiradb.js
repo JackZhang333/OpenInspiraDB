@@ -2215,15 +2215,25 @@ export class InspiraDBApp {
     }
 
     const searchProfile = buildSearchProfile(cleanQuery);
-    const queryVector = await this.aiService.embedText(searchProfile.semanticText || cleanQuery);
+
+    // 尝试获取语义向量，离线时降级为纯文本匹配
+    let queryVector = null;
+    let useSemanticSearch = false;
+    try {
+      queryVector = await this.aiService.embedText(searchProfile.semanticText || cleanQuery);
+      useSemanticSearch = true;
+    } catch (error) {
+      // 网络错误时降级为纯文本匹配（离线模式）
+      if (error.message?.includes('fetch') || error.message?.includes('network')) {
+        this.logger?.info('search-embedding-failed-offline-mode', { query: cleanQuery, error: error.message });
+      } else {
+        throw error; // 非网络错误继续抛出
+      }
+    }
+
     const scored = [];
 
     for (const image of candidates) {
-      const embedding = this.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId: image.id });
-      if (!embedding) {
-        continue;
-      }
-
       const activeCaption = this.db.get(
         `SELECT id, content
          FROM captions
@@ -2231,12 +2241,28 @@ export class InspiraDBApp {
         { captionId: image.active_caption_id },
       );
       const effectiveTags = this.getEffectiveTags(image.id);
-      const vector = toJsonVector(embedding.vector);
-      const distance = cosineDistance(queryVector, vector);
-      const semanticScore = Math.max(0, 1 - distance);
+
+      // 纯文本匹配始终可用
       const lexicalScore = scoreSearchTextMatch(searchProfile, image, activeCaption, effectiveTags);
       const intentScore = scoreSearchIntent(searchProfile, activeCaption, effectiveTags);
-      const rankScore = semanticScore * 70 + lexicalScore * 4 + intentScore;
+
+      // 语义搜索（仅在在线模式下）
+      let semanticScore = 0;
+      let distance = 1;
+      if (useSemanticSearch && queryVector) {
+        const embedding = this.db.get('SELECT vector FROM embeddings WHERE image_id = :imageId', { imageId: image.id });
+        if (embedding) {
+          const vector = toJsonVector(embedding.vector);
+          distance = cosineDistance(queryVector, vector);
+          semanticScore = Math.max(0, 1 - distance);
+        }
+      }
+
+      // 调整权重：在线时使用语义+文本，离线时仅用文本
+      const rankScore = useSemanticSearch
+        ? semanticScore * 70 + lexicalScore * 4 + intentScore
+        : lexicalScore * 10 + intentScore;
+
       scored.push({
         image,
         distance,
