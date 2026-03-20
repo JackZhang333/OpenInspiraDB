@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import sharp from 'sharp';
+import { spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { nowIso } from '../core/database.js';
 import {
@@ -45,13 +46,35 @@ async function fileToDataUrl(filePath) {
   // HEIC 格式需要转换为 JPEG 才能被 AI 服务识别
   if (ext === '.heic') {
     try {
-      const buffer = await sharp(filePath)
-        .jpeg({ quality: 90 })
-        .toBuffer();
-      const base64 = buffer.toString('base64');
+      // 使用 macOS 内置的 sips 命令转换 HEIC 到 JPEG
+      const jpegPath = `${filePath}.temp.jpg`;
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('HEIC conversion timeout'));
+        }, 10000); // 10秒超时
+
+        const proc = spawn('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '90', filePath, '--out', jpegPath]);
+
+        proc.on('close', (code) => {
+          clearTimeout(timeout);
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`sips exited with code ${code}`));
+          }
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      const base64 = fs.readFileSync(jpegPath).toString('base64');
+      fs.unlinkSync(jpegPath); // 删除临时文件
       return `data:image/jpeg;base64,${base64}`;
     } catch (error) {
-      // 转换失败则回退到原始方式（可能会失败）
+      // 转换失败则记录日志并发送原始 HEIC 数据（AI 服务会报错但不会卡住应用）
       console.error('HEIC to JPEG conversion failed:', error);
       const base64 = fs.readFileSync(filePath).toString('base64');
       return `data:${toMimeType(filePath)};base64,${base64}`;
