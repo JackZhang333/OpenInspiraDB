@@ -1907,7 +1907,7 @@ export class InspiraDBApp {
     const fileName = path.basename(resolved.filePath);
     this.logger.info('importFile-building-paths', { fileName });
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
-    const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash);
+    const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash, ext);
     const now = nowIso();
     let importedXmpMetadata = null;
 
@@ -1945,7 +1945,7 @@ export class InspiraDBApp {
       this.logger.info('importFile-file-copied', { libraryPath });
 
       this.logger.info('importFile-creating-thumbnail', { libraryPath, thumbnailPath });
-      createThumbnailPlaceholder(libraryPath, thumbnailPath);
+      await createThumbnailPlaceholder(libraryPath, thumbnailPath);
       this.logger.info('importFile-thumbnail-created', { thumbnailPath });
 
       this.logger.info('importFile-inserting-db', { fileName, md5Hash });

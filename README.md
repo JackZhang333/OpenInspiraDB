@@ -59,3 +59,7 @@ npm run dist:mas-dev
 ```bash
 npm test
 ```
+## 清空测试数据
+```
+ls -la ~/Library/Application\ Support/inspiradb 2>/dev/null && rm -rf ~/Library/Application\ Support/inspiradb && echo "数据已清空" || echo "目录不存在"
+```

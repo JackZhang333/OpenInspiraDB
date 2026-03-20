@@ -60,6 +60,7 @@ function toMimeType(filePath) {
   if (ext === '.heic') return 'image/heic';
   if (ext === '.gif') return 'image/gif';
   if (ext === '.bmp') return 'image/bmp';
+  if (ext === '.thumb') return 'image/jpeg'; // 缩略图默认是 JPEG
   return 'application/octet-stream';
 }
 
