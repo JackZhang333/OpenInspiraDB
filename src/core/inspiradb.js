@@ -1858,7 +1858,9 @@ export class InspiraDBApp {
 
     this.logger.info('importFile-format-supported', { filePath: resolved.filePath, ext });
 
+    this.logger.info('importFile-checking-size', { filePath: resolved.filePath, size: resolved.stat.size, maxSize: MAX_FILE_SIZE_BYTES });
     if (resolved.stat.size > MAX_FILE_SIZE_BYTES) {
+      this.logger.warn('importFile-file-too-large', { filePath: resolved.filePath, size: resolved.stat.size });
       return {
         status: 'skipped',
         reason: 'FILE_TOO_LARGE',
@@ -1868,7 +1870,9 @@ export class InspiraDBApp {
 
     let md5Hash;
     try {
+      this.logger.info('importFile-computing-md5', { filePath: resolved.filePath });
       md5Hash = md5File(resolved.filePath);
+      this.logger.info('importFile-md5-computed', { filePath: resolved.filePath, md5Hash });
     } catch {
       return {
         status: 'skipped',
@@ -1887,16 +1891,29 @@ export class InspiraDBApp {
       };
     }
 
+    this.logger.info('importFile-checking-capacity');
     this.ensureImportCapacity();
+    this.logger.info('importFile-capacity-ok');
 
     const fileName = path.basename(resolved.filePath);
+    this.logger.info('importFile-building-paths', { fileName });
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
     const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash);
     const now = nowIso();
     let importedXmpMetadata = null;
 
     try {
-      const xmpMetadata = readXmpMetadataForImage(resolved.filePath);
+      this.logger.info('importFile-reading-xmp', { filePath: resolved.filePath });
+      const xmpMetadata = await Promise.race([
+        new Promise((resolve) => {
+          const result = readXmpMetadataForImage(resolved.filePath);
+          resolve(result);
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('XMP_READ_TIMEOUT')), 5000);
+        }),
+      ]);
+      this.logger.info('importFile-xmp-read', { filePath: resolved.filePath, hasCaption: xmpMetadata.hasCaption, hasTags: xmpMetadata.hasTags });
       if (xmpMetadata.hasCaption && xmpMetadata.hasTags) {
         importedXmpMetadata = {
           caption: xmpMetadata.caption,
