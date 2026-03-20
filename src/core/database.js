@@ -110,6 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_analysis_jobs_status ON analysis_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_image_id ON analysis_jobs(image_id);
 CREATE INDEX IF NOT EXISTS idx_image_tags_source_image_id ON image_tags(source, image_id);
 CREATE INDEX IF NOT EXISTS idx_image_tags_source_tag_id ON image_tags(source, tag_id);
+CREATE INDEX IF NOT EXISTS idx_images_filename_size ON images(original_file_name, file_size);
 `;
 
 export function nowIso() {

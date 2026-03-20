@@ -1858,6 +1858,25 @@ export class InspiraDBApp {
       };
     }
 
+    // 快速去重检查：文件名 + 文件大小
+    const fileName = path.basename(resolved.filePath);
+    const fileSize = resolved.stat.size;
+
+    const quickDuplicate = this.db.get(
+      `SELECT id FROM images
+       WHERE original_file_name = :fileName AND file_size = :fileSize`,
+      { fileName, fileSize }
+    );
+
+    if (quickDuplicate) {
+      return {
+        status: 'duplicate',
+        reason: 'FILENAME_SIZE_MATCH',
+        filePath: resolved.filePath,
+        imageId: quickDuplicate.id,
+      };
+    }
+
     let md5Hash;
     try {
       md5Hash = md5File(resolved.filePath);
@@ -1881,7 +1900,6 @@ export class InspiraDBApp {
 
     this.ensureImportCapacity();
 
-    const fileName = path.basename(resolved.filePath);
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
     const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash, ext);
     const now = nowIso();
