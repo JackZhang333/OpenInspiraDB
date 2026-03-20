@@ -192,9 +192,9 @@ export function DetailPanel({
       <div className="flex-1 overflow-y-auto">
         <div className="space-y-6 px-6 py-6">
           <div className="overflow-hidden rounded-2xl border border-clay/10 bg-white shadow-sm">
-            {image.preview_data_url ? (
+            {image.thumbnail_data_url ? (
               <img
-                src={image.preview_data_url}
+                src={image.thumbnail_data_url}
                 alt={image.original_file_name}
                 className="w-full object-cover"
               />
