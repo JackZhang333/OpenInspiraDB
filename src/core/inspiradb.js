@@ -1828,14 +1828,11 @@ export class InspiraDBApp {
   }
 
   async importFile(filePath, options = {}) {
-    this.logger.info('importFile-start', { filePath });
     let resolved;
 
     try {
       resolved = resolveExistingFilePath(filePath);
-      this.logger.info('importFile-path-resolved', { filePath: resolved.filePath });
     } catch (error) {
-      this.logger.error('importFile-path-resolve-failed', { filePath, error: error.message });
       return {
         status: 'skipped',
         reason: error.code || 'FILE_ACCESS_FAILED',
@@ -1844,11 +1841,8 @@ export class InspiraDBApp {
     }
 
     const ext = path.extname(resolved.filePath).toLowerCase();
-    this.logger.info('importFile-checking-format', { filePath: resolved.filePath, ext });
 
-    const isSupported = isSupportedImageFile(resolved.filePath, this.logger);
-    if (!isSupported) {
-      this.logger.warn('importFile-unsupported-format', { filePath: resolved.filePath, ext });
+    if (!isSupportedImageFile(resolved.filePath)) {
       return {
         status: 'skipped',
         reason: 'UNSUPPORTED_FORMAT',
@@ -1856,11 +1850,7 @@ export class InspiraDBApp {
       };
     }
 
-    this.logger.info('importFile-format-supported', { filePath: resolved.filePath, ext });
-
-    this.logger.info('importFile-checking-size', { filePath: resolved.filePath, size: resolved.stat.size, maxSize: MAX_FILE_SIZE_BYTES });
     if (resolved.stat.size > MAX_FILE_SIZE_BYTES) {
-      this.logger.warn('importFile-file-too-large', { filePath: resolved.filePath, size: resolved.stat.size });
       return {
         status: 'skipped',
         reason: 'FILE_TOO_LARGE',
@@ -1870,11 +1860,8 @@ export class InspiraDBApp {
 
     let md5Hash;
     try {
-      this.logger.info('importFile-computing-md5', { filePath: resolved.filePath });
       md5Hash = md5File(resolved.filePath);
-      this.logger.info('importFile-md5-computed', { filePath: resolved.filePath, md5Hash });
-    } catch (error) {
-      this.logger.error('importFile-md5-failed', { filePath: resolved.filePath, error: String(error) });
+    } catch {
       return {
         status: 'skipped',
         reason: 'HASH_COMPUTE_FAILED',
@@ -1882,15 +1869,7 @@ export class InspiraDBApp {
       };
     }
 
-    this.logger.info('importFile-checking-duplicate', { md5Hash });
-    let existed;
-    try {
-      existed = this.db.get('SELECT id, library_path FROM images WHERE md5_hash = :md5Hash', { md5Hash });
-      this.logger.info('importFile-duplicate-checked', { md5Hash, isDuplicate: !!existed });
-    } catch (dbError) {
-      this.logger.error('importFile-db-error', { md5Hash, error: String(dbError) });
-      throw dbError;
-    }
+    const existed = this.db.get('SELECT id, library_path FROM images WHERE md5_hash = :md5Hash', { md5Hash });
     if (existed) {
       return {
         status: 'duplicate',
@@ -1900,29 +1879,16 @@ export class InspiraDBApp {
       };
     }
 
-    this.logger.info('importFile-checking-capacity');
     this.ensureImportCapacity();
-    this.logger.info('importFile-capacity-ok');
 
     const fileName = path.basename(resolved.filePath);
-    this.logger.info('importFile-building-paths', { fileName });
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
     const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash, ext);
     const now = nowIso();
     let importedXmpMetadata = null;
 
     try {
-      this.logger.info('importFile-reading-xmp', { filePath: resolved.filePath });
-      const xmpMetadata = await Promise.race([
-        new Promise((resolve) => {
-          const result = readXmpMetadataForImage(resolved.filePath);
-          resolve(result);
-        }),
-        new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('XMP_READ_TIMEOUT')), 5000);
-        }),
-      ]);
-      this.logger.info('importFile-xmp-read', { filePath: resolved.filePath, hasCaption: xmpMetadata.hasCaption, hasTags: xmpMetadata.hasTags });
+      const xmpMetadata = readXmpMetadataForImage(resolved.filePath);
       if (xmpMetadata.hasCaption && xmpMetadata.hasTags) {
         importedXmpMetadata = {
           caption: xmpMetadata.caption,
@@ -1946,9 +1912,6 @@ export class InspiraDBApp {
 
       this.logger.info('importFile-creating-thumbnail', { libraryPath, thumbnailPath });
       await createThumbnailPlaceholder(libraryPath, thumbnailPath);
-      this.logger.info('importFile-thumbnail-created', { thumbnailPath });
-
-      this.logger.info('importFile-inserting-db', { fileName, md5Hash });
       this.db.transaction(() => {
         const result = this.db.run(
           `INSERT INTO images (
@@ -2039,12 +2002,9 @@ export class InspiraDBApp {
             },
           );
         } else {
-          this.logger.info('importFile-creating-analysis-job', { imageId });
           this.createAnalysisJob(imageId, { jobType: 'analyze_image', maxRetryCount: 2, asTransaction: true });
-          this.logger.info('importFile-analysis-job-created', { imageId });
         }
       });
-      this.logger.info('importFile-db-insert-complete', { imageId });
     } catch (error) {
       removeFileIfExists(libraryPath);
       removeFileIfExists(thumbnailPath);
@@ -2096,12 +2056,6 @@ export class InspiraDBApp {
     } else {
       await this.queue.drain();
     }
-
-    this.logger.info('importFile-success', {
-      imageId,
-      filePath: resolved.filePath,
-      analysisStatus: importedXmpMetadata ? IMAGE_STATUS.IMPORTED : IMAGE_STATUS.QUEUED,
-    });
 
     return {
       status: 'imported',
