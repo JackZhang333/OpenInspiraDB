@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, RefreshCcw, Search, Sparkles, X } from 'lucide-react';
+import { ChevronUp, Loader2, RefreshCcw, Search, Sparkles, X } from 'lucide-react';
 import { Badge } from './ui/badge.jsx';
 import { GalleryCard, GalleryCardSkeleton } from './GalleryCard.jsx';
 
@@ -19,6 +19,8 @@ export function LibraryWorkspace({
   loading = false,
   hasMore = false,
   onLoadMore,
+  page,
+  detailDrawerOpen = false,
 }) {
   const { t } = useTranslation();
   const hasTagFilter = Boolean(selectedTags?.length);
@@ -37,6 +39,7 @@ export function LibraryWorkspace({
   const [dismissedCardId, setDismissedCardId] = useState(null);
   const loadMoreRef = useRef(null);
   const scrollContainerRef = useRef(null);
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   useEffect(() => {
     if (!loadMoreRef.current || !hasMore || loading) return;
@@ -53,6 +56,34 @@ export function LibraryWorkspace({
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
   }, [hasMore, loading, onLoadMore]);
+
+  // Auto-scroll to top only on first page (new search, tag selection, etc.)
+  // Skip scrolling when loading more (page > 1) to preserve scroll position
+  useEffect(() => {
+    if (!scrollContainerRef.current) return;
+    if (page !== 1) return; // Don't scroll when loading more
+
+    scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [result.items, page]);
+
+  // Show/hide back-to-top button based on scroll position
+  // Re-bind when result.items changes to handle initial load
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop;
+      const clientHeight = container.clientHeight;
+      // Show button when scrolled past half the viewport height
+      setShowBackToTop(scrollTop > clientHeight * 0.5);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll(); // Initial check
+
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [result.items]);
 
   useEffect(() => {
     const updateCount = () => {
@@ -183,7 +214,7 @@ export function LibraryWorkspace({
         ) : null}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+      <div className="relative flex min-h-0 flex-1 flex-col px-4 py-3">
         {selectedTags?.length ? (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="bg-clay/15 text-ink/70">
@@ -282,6 +313,17 @@ export function LibraryWorkspace({
               </div>
             )}
           </div>
+        )}
+
+        {/* Back to top button - positioned outside scroll container, hidden when detail panel open */}
+        {result.items.length > 0 && showBackToTop && !detailDrawerOpen && (
+          <button
+            onClick={() => scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="absolute bottom-8 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-white text-ink shadow-xl ring-1 ring-clay/20 transition-all hover:bg-gray-50 hover:shadow-2xl hover:scale-110 active:scale-95"
+            aria-label="Back to top"
+          >
+            <ChevronUp className="h-6 w-6" />
+          </button>
         )}
       </div>
     </div>

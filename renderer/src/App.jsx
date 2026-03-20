@@ -203,6 +203,8 @@ export default function App() {
               loading={loading}
               hasMore={hasMore}
               onLoadMore={handleLoadMore}
+              page={page}
+              detailDrawerOpen={detailDrawerOpen}
             />
           </div>
         </section>
