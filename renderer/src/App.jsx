@@ -113,8 +113,9 @@ export default function App() {
     sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[320px_minmax(0,1fr)]'
   ), [sidebarCollapsed]);
 
-  const handleSubmitSearch = () => {
-    setQuery(queryDraft);
+  const handleSubmitSearch = (overrideQuery) => {
+    const finalQuery = overrideQuery !== undefined ? overrideQuery : queryDraft;
+    setQuery(finalQuery);
     runSearch();
   };
 

@@ -22,6 +22,16 @@ export function LibraryWorkspace({
 }) {
   const { t } = useTranslation();
   const hasTagFilter = Boolean(selectedTags?.length);
+
+  const handleSuggestionClick = useCallback((suggestion) => {
+    onQueryDraftChange(suggestion);
+    onSubmitSearch(suggestion);
+  }, [onQueryDraftChange, onSubmitSearch]);
+
+  const handleClearSearch = useCallback(() => {
+    onQueryDraftChange('');
+    onSubmitSearch('');
+  }, [onQueryDraftChange, onSubmitSearch]);
   const [columnCount, setColumnCount] = useState(5);
   const [hoveredCardId, setHoveredCardId] = useState(null);
   const [dismissedCardId, setDismissedCardId] = useState(null);
@@ -132,7 +142,7 @@ export function LibraryWorkspace({
             />
             {queryDraft ? (
               <button
-                onClick={() => onQueryDraftChange('')}
+                onClick={handleClearSearch}
                 className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-ink/30 transition hover:bg-clay/10 hover:text-ink/50"
               >
                 <X className="h-3.5 w-3.5" />
@@ -152,19 +162,19 @@ export function LibraryWorkspace({
           <div className="mx-auto mt-3 flex max-w-2xl items-center gap-2 text-[11px] text-ink/60">
             <span>{t('workspace.try')}</span>
             <button
-              onClick={() => onQueryDraftChange(t('workspace.suggestion1'))}
+              onClick={() => handleSuggestionClick(t('workspace.suggestion1'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               {t('workspace.suggestion1')}
             </button>
             <button
-              onClick={() => onQueryDraftChange(t('workspace.suggestion2'))}
+              onClick={() => handleSuggestionClick(t('workspace.suggestion2'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               {t('workspace.suggestion2')}
             </button>
             <button
-              onClick={() => onQueryDraftChange(t('workspace.suggestion3'))}
+              onClick={() => handleSuggestionClick(t('workspace.suggestion3'))}
               className="rounded-full bg-white/90 px-2.5 py-0.5 text-ink/70 transition hover:bg-white hover:text-ink/90"
             >
               {t('workspace.suggestion3')}
