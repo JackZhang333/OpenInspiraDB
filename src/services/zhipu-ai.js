@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 
 import { nowIso } from '../core/database.js';
 import {
@@ -38,7 +39,25 @@ function toMimeType(filePath) {
   return 'application/octet-stream';
 }
 
-function fileToDataUrl(filePath) {
+async function fileToDataUrl(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+
+  // HEIC 格式需要转换为 JPEG 才能被 AI 服务识别
+  if (ext === '.heic') {
+    try {
+      const buffer = await sharp(filePath)
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      const base64 = buffer.toString('base64');
+      return `data:image/jpeg;base64,${base64}`;
+    } catch (error) {
+      // 转换失败则回退到原始方式（可能会失败）
+      console.error('HEIC to JPEG conversion failed:', error);
+      const base64 = fs.readFileSync(filePath).toString('base64');
+      return `data:${toMimeType(filePath)};base64,${base64}`;
+    }
+  }
+
   const base64 = fs.readFileSync(filePath).toString('base64');
   return `data:${toMimeType(filePath)};base64,${base64}`;
 }
@@ -434,7 +453,7 @@ export class ZhipuAiService {
       throw error;
     }
 
-    const imageDataUrl = fileToDataUrl(image.library_path);
+    const imageDataUrl = await fileToDataUrl(image.library_path);
     const settings = this.getSettings();
     const language = getLanguage(this.db);
     const taxonomyContext = buildTaxonomyContext(this.db, language);
