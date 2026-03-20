@@ -60,10 +60,27 @@ export default function App() {
   const [tagSettingsOpen, setTagSettingsOpen] = useState(false);
 
   // 网络状态检测
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(true);
   const [showOfflineAlert, setShowOfflineAlert] = useState(false);
 
   useEffect(() => {
+    // 通过 preload 暴露的方法检测网络状态
+    const checkNetwork = () => {
+      const online = window.inspira?.getNetworkStatus?.() ?? navigator.onLine;
+      setIsOnline(online);
+      setShowOfflineAlert(!online);
+    };
+
+    // 初始化检测
+    checkNetwork();
+
+    // 监听网络变化
+    const unsubscribe = window.inspira?.onNetworkChange?.((online) => {
+      setIsOnline(online);
+      setShowOfflineAlert(!online);
+    });
+
+    // 降级方案：直接使用 window 事件
     const handleOnline = () => {
       setIsOnline(true);
       setShowOfflineAlert(false);
@@ -77,6 +94,7 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     return () => {
+      if (unsubscribe) unsubscribe();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };

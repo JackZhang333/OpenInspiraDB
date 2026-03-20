@@ -87,4 +87,24 @@ contextBridge.exposeInMainWorld('inspira', {
   setSetting(key, value) {
     return ipcRenderer.invoke('inspiradb:set-setting', key, value);
   },
+  // 网络状态检测
+  getNetworkStatus() {
+    return navigator.onLine;
+  },
+  onNetworkChange(callback) {
+    if (typeof callback !== 'function') {
+      return () => {};
+    }
+
+    const onlineListener = () => callback(true);
+    const offlineListener = () => callback(false);
+
+    window.addEventListener('online', onlineListener);
+    window.addEventListener('offline', offlineListener);
+
+    return () => {
+      window.removeEventListener('online', onlineListener);
+      window.removeEventListener('offline', offlineListener);
+    };
+  },
 });

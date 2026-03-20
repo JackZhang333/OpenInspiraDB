@@ -2865,13 +2865,35 @@ export class InspiraDBApp {
     const sourceItems = await this.collectSearchItems(cleanQuery, selectedTagIds, filterMode);
 
     const counter = new Map();
+    // groupCounter 用于存储每个分组的不重复图片数量
+    const groupCounter = new Map();
+    // 临时存储每个分组的图片 ID 集合用于去重
+    const groupImageIds = new Map();
+
     for (const item of sourceItems) {
+      const itemGroupIds = new Set();
       for (const tag of item.tagDetails || []) {
         counter.set(tag.id, (counter.get(tag.id) || 0) + 1);
+        // 收集该图片关联的所有分组 ID
+        if (tag.parentId) {
+          itemGroupIds.add(tag.parentId);
+        }
+      }
+      // 将该图片 ID 添加到每个关联分组的集合中（去重）
+      for (const groupId of itemGroupIds) {
+        if (!groupImageIds.has(groupId)) {
+          groupImageIds.set(groupId, new Set());
+        }
+        groupImageIds.get(groupId).add(item.id);
       }
     }
 
-    return listTagTree(this.db, counter);
+    // 计算每个分组的不重复图片数量
+    for (const [groupId, imageIds] of groupImageIds) {
+      groupCounter.set(groupId, imageIds.size);
+    }
+
+    return listTagTree(this.db, counter, groupCounter);
   }
 
 }

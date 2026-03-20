@@ -630,7 +630,7 @@ export function listEffectiveTagNames(db, imageId) {
   return listEffectiveTagRecords(db, imageId).map((tag) => tag.name);
 }
 
-export function listTagTree(db, countByTagId = new Map()) {
+export function listTagTree(db, countByTagId = new Map(), groupCounter = new Map()) {
   const usageCountRows = db.all(
     `SELECT it.tag_id, COUNT(*) AS total
      FROM image_tags it
@@ -705,9 +705,18 @@ export function listTagTree(db, countByTagId = new Map()) {
       count,
       usageCount,
     });
+    // 累加子标签数量（用于回退逻辑）
     parent.count += count;
     parent.usageCount += usageCount;
     parents.set(parent.id, parent);
+  }
+
+  // 应用分组级别的不重复图片数量（如果提供）
+  for (const [parentId, uniqueCount] of groupCounter) {
+    const parent = parents.get(parentId);
+    if (parent) {
+      parent.count = uniqueCount;
+    }
   }
 
   return Array.from(parents.values())
