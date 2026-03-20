@@ -64,6 +64,9 @@ export function buildThumbnailPath(thumbnailRootPath, md5Hash, ext = '.thumb') {
 export async function createThumbnailPlaceholder(sourcePath, thumbnailPath) {
   const ext = path.extname(sourcePath).toLowerCase();
 
+  // 确保缩略图目录存在
+  fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+
   // HEIC 格式需要转换为 JPEG 才能被浏览器显示
   if (ext === '.heic') {
     try {
