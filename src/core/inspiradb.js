@@ -1873,7 +1873,8 @@ export class InspiraDBApp {
       this.logger.info('importFile-computing-md5', { filePath: resolved.filePath });
       md5Hash = md5File(resolved.filePath);
       this.logger.info('importFile-md5-computed', { filePath: resolved.filePath, md5Hash });
-    } catch {
+    } catch (error) {
+      this.logger.error('importFile-md5-failed', { filePath: resolved.filePath, error: String(error) });
       return {
         status: 'skipped',
         reason: 'HASH_COMPUTE_FAILED',
@@ -1881,7 +1882,15 @@ export class InspiraDBApp {
       };
     }
 
-    const existed = this.db.get('SELECT id, library_path FROM images WHERE md5_hash = :md5Hash', { md5Hash });
+    this.logger.info('importFile-checking-duplicate', { md5Hash });
+    let existed;
+    try {
+      existed = this.db.get('SELECT id, library_path FROM images WHERE md5_hash = :md5Hash', { md5Hash });
+      this.logger.info('importFile-duplicate-checked', { md5Hash, isDuplicate: !!existed });
+    } catch (dbError) {
+      this.logger.error('importFile-db-error', { md5Hash, error: String(dbError) });
+      throw dbError;
+    }
     if (existed) {
       return {
         status: 'duplicate',
