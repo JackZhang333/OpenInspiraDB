@@ -1843,7 +1843,7 @@ export class InspiraDBApp {
       };
     }
 
-    const ext = require('path').extname(resolved.filePath).toLowerCase();
+    const ext = path.extname(resolved.filePath).toLowerCase();
     this.logger.info('importFile-checking-format', { filePath: resolved.filePath, ext });
 
     const isSupported = isSupportedImageFile(resolved.filePath, this.logger);
