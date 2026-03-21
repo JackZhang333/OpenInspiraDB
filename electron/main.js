@@ -13,6 +13,7 @@ const {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
 } = electron;
 
@@ -140,6 +141,63 @@ function createInspiraApp() {
     thumbnailRootPath: path.join(userDataPath, 'thumbnails'),
     autoStartQueue: true,
   });
+}
+
+function createMenu() {
+  const template = [
+    // App 菜单
+    {
+      label: 'InspiraDB',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    },
+    // Edit 菜单
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectall' }
+      ]
+    },
+    // Window 菜单 - 关键修复
+    {
+      label: 'Window',
+      submenu: [
+        {
+          label: 'Show Main Window',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => {
+            if (mainWindow) {
+              if (mainWindow.isDestroyed()) {
+                createMainWindow();
+              } else {
+                mainWindow.show();
+                mainWindow.focus();
+              }
+            } else {
+              createMainWindow();
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'minimize' },
+        { role: 'close' },
+        { type: 'separator' },
+        { role: 'front' }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 function registerIpcHandlers() {
@@ -392,6 +450,7 @@ app.whenReady().then(() => {
   inspiraApp = createInspiraApp();
   registerIpcHandlers();
   createMainWindow();
+  createMenu();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

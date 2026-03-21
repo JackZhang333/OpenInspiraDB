@@ -11,7 +11,6 @@ import {
   Download,
   FolderOpen,
   ImagePlus,
-  Lightbulb,
   Loader2,
   Plus,
   Settings2,
@@ -26,15 +25,16 @@ import { cn } from '../lib/utils.js';
 import { filterSidebarTagTree } from '../lib/tag-tree.js';
 import { Button } from './ui/button.jsx';
 import { Input } from './ui/input.jsx';
+import LogoSvg from '../assets/Logo.svg';
 
 function LogoIcon({ size = 24 }) {
   return (
-    <div
-      className="flex items-center justify-center rounded-xl bg-gradient-to-br from-moss to-moss/80 text-white shadow-sm"
+    <img
+      src={LogoSvg}
+      alt="Logo"
       style={{ width: size, height: size }}
-    >
-      <Lightbulb className="h-[60%] w-[60%]" strokeWidth={2.5} />
-    </div>
+      className="rounded-xl"
+    />
   );
 }
 
@@ -869,7 +869,7 @@ export function AppSidebar({
         {!collapsed ? (
           <div className="flex items-center gap-2">
             <LogoIcon size={28} />
-            <span className="bg-gradient-to-r from-moss to-moss/70 bg-clip-text text-[17px] font-bold tracking-tight text-transparent">{t('sidebar.title')}</span>
+            <span className="bg-gradient-to-r from-black to-moss/70 bg-clip-text text-[17px] font-bold tracking-tight text-transparent">{t('sidebar.title')}</span>
           </div>
         ) : (
           <LogoIcon size={24} />
