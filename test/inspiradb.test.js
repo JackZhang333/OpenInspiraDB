@@ -272,9 +272,9 @@ test('import -> analyze -> search -> user override rules', async () => {
     assert.ok(detailAfterAi.activeCaption?.content.includes('设计参考图'));
     assert.ok(detailAfterAi.effectiveTags.length >= 1);
     const treeAfterAi = app.listTagTree();
-    assert.ok(treeAfterAi.some((group) => group.name === '行业 / 用途' && group.children.some((tag) => tag.name === '海报')));
+    assert.ok(treeAfterAi.some((group) => group.name === '行业用途' && group.children.some((tag) => tag.name === '海报')));
     assert.ok(treeAfterAi.some((group) => group.name === '风格' && group.children.some((tag) => tag.name === '极简')));
-    assert.ok(treeAfterAi.some((group) => group.name === '构图 / 形式' && group.children.some((tag) => tag.name === '留白')));
+    assert.ok(treeAfterAi.some((group) => group.name === '构图形式' && group.children.some((tag) => tag.name === '留白')));
     assert.ok(!treeAfterAi.some((group) => group.name === '色彩'));
 
     const duplicateResult = await app.importFile(sourceFile);

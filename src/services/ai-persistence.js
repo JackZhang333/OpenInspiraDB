@@ -35,7 +35,29 @@ function mapLegacyTagsToTaxonomyTags(tagNames) {
 
 function normalizeTaxonomyTags(input) {
   if (Array.isArray(input)) {
-    return mapLegacyTagsToTaxonomyTags(input);
+    if (input.every((item) => typeof item === 'string')) {
+      return mapLegacyTagsToTaxonomyTags(input);
+    }
+
+    const seenChildNames = new Set();
+    const items = [];
+
+    for (const rawItem of input) {
+      const childName = normalizeTagName(String(rawItem?.childName || rawItem?.name || ''));
+      if (!childName || seenChildNames.has(childName)) {
+        continue;
+      }
+
+      seenChildNames.add(childName);
+      items.push({
+        parentName: normalizeTagName(String(rawItem?.parentName || '')),
+        childName,
+        isNewParent: Boolean(rawItem?.isNewParent),
+        isNewChild: Boolean(rawItem?.isNewChild),
+      });
+    }
+
+    return items;
   }
 
   if (!input || typeof input !== 'object') {

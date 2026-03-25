@@ -99,6 +99,10 @@ function normalizeMode(mode) {
   return String(mode || '').trim().toLowerCase() === 'or' ? 'or' : 'and';
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function flattenChildTags(tagTree = []) {
   return tagTree.flatMap((group) => group.children || []);
 }
@@ -130,6 +134,7 @@ function deriveExpandedParents(tagTree, currentExpandedIds = [], selectedTagIds 
 let importProgressUnsubscribe = null;
 let importAutoRefreshInFlight = false;
 let copyFeedbackTimeout = null;
+let toastTimeout = null;
 
 function normalizeImportProgress(payload = {}) {
   const total = Number(payload.total);
@@ -149,6 +154,44 @@ function normalizeImportProgress(payload = {}) {
     analyzingCount: Number(payload.analyzingCount || 0),
     message: String(payload.message || ''),
   };
+}
+
+function createSingleImportPendingProgress() {
+  return normalizeImportProgress({
+    mode: 'single',
+    phase: 'started',
+    current: 0,
+    total: 1,
+  });
+}
+
+async function waitForImportedImageVisible(get, imageId, options = {}) {
+  const maxAttempts = Number(options.maxAttempts || 12);
+  const retryDelayMs = Number(options.retryDelayMs || 150);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await get().refreshSearch();
+    const hasImportedImage = (get().result?.items || []).some((item) => Number(item.id) === Number(imageId));
+    if (hasImportedImage) {
+      return true;
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await sleep(retryDelayMs);
+    }
+  }
+
+  return false;
+}
+
+function resetSingleImportSearchState(set) {
+  set({
+    query: '',
+    selectedTagIds: [],
+    selectedTags: [],
+    expandedParentTagIds: [],
+    page: 1,
+  });
 }
 
 export const useAppStore = create((set, get) => ({
@@ -171,9 +214,36 @@ export const useAppStore = create((set, get) => ({
   reanalyzing: false,
   error: null,
   copiedImageId: null,
+  toast: null,
 
   setQuery(query) {
     set({ query });
+  },
+
+  showToast(message, type = 'success') {
+    if (!message) {
+      return;
+    }
+
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+      toastTimeout = null;
+    }
+
+    set({ toast: { message: String(message), type: String(type || 'success') } });
+    toastTimeout = setTimeout(() => {
+      toastTimeout = null;
+      set({ toast: null });
+    }, 2400);
+  },
+
+  clearToast() {
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+      toastTimeout = null;
+    }
+
+    set({ toast: null });
   },
 
   ensureImportProgressListener() {
@@ -188,18 +258,21 @@ export const useAppStore = create((set, get) => ({
         || progress.phase === 'processing'
         || progress.phase === 'importing'
         || progress.phase === 'analyzing';
+      const shouldKeepImporting = isActive || (progress.mode === 'single' && progress.phase === 'completed');
 
       set({
         importProgress: progress,
-        importing: isActive,
+        importing: shouldKeepImporting,
       });
 
       if (progress.phase === 'completed' && !importAutoRefreshInFlight) {
-        importAutoRefreshInFlight = true;
-        get().refreshSearch().finally(() => {
-          importAutoRefreshInFlight = false;
-          set({ importing: false, importProgress: null });
-        });
+        if (progress.mode === 'folder') {
+          importAutoRefreshInFlight = true;
+          get().refreshSearch().finally(() => {
+            importAutoRefreshInFlight = false;
+            set({ importing: false, importProgress: null });
+          });
+        }
       }
 
       if (progress.phase === 'error') {
@@ -351,17 +424,33 @@ export const useAppStore = create((set, get) => ({
 
   async importFile() {
     get().ensureImportProgressListener();
-    set({ importing: true, error: null });
 
     try {
       const bridge = getBridge();
       const hasProgressBridge = typeof bridge.onImportProgress === 'function';
+      set({
+        importing: true,
+        error: null,
+        importProgress: hasProgressBridge ? createSingleImportPendingProgress() : null,
+      });
       const result = await bridge.importFile();
       if (result?.canceled || !hasProgressBridge) {
         set({ importing: false, importProgress: null });
       }
-      if (!result?.canceled && !hasProgressBridge) {
-        await get().refreshSearch();
+      if (!result?.canceled) {
+        const importedImageId = Number(result?.image?.id || 0) || null;
+        resetSingleImportSearchState(set);
+        if (importedImageId) {
+          const visible = await waitForImportedImageVisible(get, importedImageId);
+          if (!visible) {
+            get().showToast(i18n.t('feedback.importImagePendingVisibility'), 'warning');
+          }
+        } else {
+          await get().refreshSearch();
+        }
+      }
+      if (!result?.canceled) {
+        set({ importing: false, importProgress: null });
       }
       return result;
     } catch (error) {
@@ -496,6 +585,13 @@ export const useAppStore = create((set, get) => ({
     try {
       const callExportImage = getInspiraMethod('exportImage', 'inspiradb:export-image');
       const result = await callExportImage(imageId);
+      if (!result?.canceled && result?.filePath) {
+        const warningCount = getExportWarningCount(result);
+        get().showToast(
+          i18n.t(warningCount > 0 ? 'feedback.exportImageSuccessWithWarning' : 'feedback.exportImageSuccess'),
+          warningCount > 0 ? 'warning' : 'success',
+        );
+      }
       set({ saving: false });
       return result;
     } catch (error) {
@@ -519,6 +615,18 @@ export const useAppStore = create((set, get) => ({
         (ids) => ({ imageIds: ids }),
       );
       const result = await callExportImages(imageIds);
+      const exportedCount = Number(result?.exportedCount || 0);
+      const failedCount = Number(result?.failedCount || 0);
+      const warningCount = Number(result?.warningCount || 0);
+      if (!result?.canceled && (exportedCount > 0 || failedCount > 0 || warningCount > 0)) {
+        const hasIssues = failedCount > 0 || warningCount > 0;
+        get().showToast(
+          hasIssues
+            ? i18n.t('feedback.exportBatchSummary', { exportedCount, failedCount, warningCount })
+            : i18n.t('feedback.exportBatchSuccess', { count: exportedCount }),
+          hasIssues ? 'warning' : 'success',
+        );
+      }
       set({ saving: false });
       return result;
     } catch (error) {

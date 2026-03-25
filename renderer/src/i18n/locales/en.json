@@ -166,6 +166,10 @@
     "targetTagNotFound": "Target tag not found, organization plan expired. Please regenerate.",
     "emptyExportSelection": "No images to export in current list",
     "exportPathRequired": "Export path cannot be empty",
+    "exportDialogFailed": "Unable to open the export dialog. Please try again.",
+    "exportPermissionDenied": "No permission to export to the selected location.",
+    "exportFailed": "Export failed. Please try another location.",
+    "exportMetadataWriteFailed": "Image exported, but metadata could not be written.",
     "copyImageFailed": "Unable to copy image. Please use export instead.",
     "imageFileMissing": "Original image file not found, may have been moved or deleted",
     "imageLimitReached": "Performance limit reached (50,000 images). Contact developer for expansion.",
@@ -177,6 +181,13 @@
     "unknown": "Unknown error",
     "requestFailed": "Request failed",
     "reanalyzeFailed": "Reanalysis failed. Please try again later."
+  },
+  "feedback": {
+    "importImagePendingVisibility": "Import completed, but the image is still syncing into the list.",
+    "exportImageSuccess": "Image exported",
+    "exportImageSuccessWithWarning": "Image exported, but metadata could not be written",
+    "exportBatchSuccess": "Exported {{count}} images",
+    "exportBatchSummary": "Exported {{exportedCount}} images, {{failedCount}} failed, {{warningCount}} metadata warnings"
   },
   "common": {
     "loading": "Loading...",

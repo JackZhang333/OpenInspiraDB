@@ -111,6 +111,16 @@ export const PRESET_PARENT_TAGS = PRESET_TAXONOMY.map((entry) => entry.name);
 const PRESET_CHILD_PARENT_MAP = new Map(
   PRESET_TAXONOMY.flatMap((group) => group.children.map((child) => [child, group.name])),
 );
+const PRESET_PARENT_ALIASES = new Map([
+  ['行业 / 用途', '行业用途'],
+  ['构图 / 形式', '构图形式'],
+  ['情绪 / 氛围', '情绪氛围'],
+]);
+
+function normalizePresetParentName(rawParentName) {
+  const parentName = normalizeTagName(String(rawParentName || ''));
+  return PRESET_PARENT_ALIASES.get(parentName) || parentName;
+}
 
 export function normalizeTagFilterMode(value) {
   return String(value || '').trim().toLowerCase() === 'or' ? 'or' : 'and';
@@ -300,7 +310,7 @@ export function findPresetTaxonomyMatch(rawParentName, rawChildName) {
     return null;
   }
 
-  const parentName = normalizeTagName(String(rawParentName || ''));
+  const parentName = normalizePresetParentName(rawParentName);
   if (parentName) {
     const parent = PRESET_TAXONOMY.find((group) => group.name === parentName);
     if (parent?.children.includes(childName)) {

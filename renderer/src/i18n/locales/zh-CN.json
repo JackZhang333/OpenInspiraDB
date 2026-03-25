@@ -166,6 +166,10 @@
     "targetTagNotFound": "目标标签不存在，整理方案已过期，请重新生成",
     "emptyExportSelection": "当前列表没有可导出的图片",
     "exportPathRequired": "导出路径不能为空",
+    "exportDialogFailed": "无法打开导出对话框，请稍后重试",
+    "exportPermissionDenied": "没有权限导出到所选位置",
+    "exportFailed": "导出失败，请尝试更换导出位置",
+    "exportMetadataWriteFailed": "图片已导出，但元数据写入失败",
     "copyImageFailed": "当前图片暂时无法复制，请改用导出后再粘贴",
     "imageFileMissing": "图片原文件不存在，可能已被移动或删除",
     "imageLimitReached": "已达到产品性能极限 5 万张，有扩容需求请联系开发者",
@@ -177,6 +181,13 @@
     "unknown": "未知错误",
     "requestFailed": "请求失败",
     "reanalyzeFailed": "重新分析失败，请稍后重试"
+  },
+  "feedback": {
+    "importImagePendingVisibility": "导入已完成，但图片仍在同步到列表中。",
+    "exportImageSuccess": "图片已导出",
+    "exportImageSuccessWithWarning": "图片已导出，但元数据写入失败",
+    "exportBatchSuccess": "已导出 {{count}} 张图片",
+    "exportBatchSummary": "已导出 {{exportedCount}} 张，失败 {{failedCount}} 张，元数据告警 {{warningCount}} 项"
   },
   "common": {
     "loading": "加载中...",

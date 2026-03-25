@@ -173,8 +173,7 @@ function isUncategorizedChildTag(tag) {
 }
 
 function getOrganizationDeleteThreshold(snapshot = {}) {
-  // 仅允许删除使用次数为 0 的标签
-  return 0;
+  return TAG_ORGANIZATION_LOW_USAGE_THRESHOLD;
 }
 
 function normalizeSelectedTagIds(db, selectedTagIds = []) {
@@ -484,6 +483,43 @@ function appendOriginalExtensionIfMissing(filePath, originalFileName) {
   }
 
   return `${filePath}${originalExt}`;
+}
+
+function createCoreError(code, cause = null) {
+  const error = new Error(code);
+  error.code = code;
+  if (cause) {
+    error.cause = cause;
+  }
+  return error;
+}
+
+function normalizeExportError(error, fallbackCode = 'EXPORT_FAILED') {
+  const rawCode = String(error?.code || '').toUpperCase();
+  const stableCode = rawCode === 'IMAGE_NOT_FOUND'
+    || rawCode === 'IMAGE_FILE_MISSING'
+    || rawCode === 'EXPORT_PATH_REQUIRED'
+    || rawCode === 'EXPORT_PERMISSION_DENIED'
+    || rawCode === 'EXPORT_FAILED'
+    ? rawCode
+    : rawCode === 'ENOENT' || rawCode === 'FILE_NOT_FOUND' || rawCode === 'NOT_A_FILE'
+      ? 'IMAGE_FILE_MISSING'
+      : rawCode === 'EACCES' || rawCode === 'EPERM'
+        ? 'EXPORT_PERMISSION_DENIED'
+        : fallbackCode;
+
+  if (error?.code === stableCode) {
+    return error;
+  }
+
+  return createCoreError(stableCode || fallbackCode, error);
+}
+
+function createExportMetadataWarning(error) {
+  return {
+    code: 'EXPORT_METADATA_WRITE_FAILED',
+    message: String(error?.message || error || 'EXPORT_METADATA_WRITE_FAILED'),
+  };
 }
 
 export class InspiraDBApp {
@@ -846,10 +882,6 @@ export class InspiraDBApp {
         }
 
         const usageCount = Number(current.usageCount || 0);
-        // 仅允许删除使用次数为 0 的标签
-        if (usageCount > 0) {
-          continue;
-        }
 
         const replacementTargets = this.sanitizeDeleteReplacementTargets(
           operation.replacementTargets,
@@ -857,6 +889,10 @@ export class InspiraDBApp {
           snapshot,
           state,
         );
+
+        if (usageCount > 0 && replacementTargets.length === 0) {
+          continue;
+        }
 
         if (usageCount > getOrganizationDeleteThreshold(snapshot)) {
           continue;
@@ -2513,6 +2549,64 @@ export class InspiraDBApp {
     };
   }
 
+  getExportImageRecord(imageId) {
+    const image = this.db.get(
+      `SELECT id, original_file_name, library_path
+       FROM images
+       WHERE id = :imageId`,
+      { imageId },
+    );
+
+    if (!image) {
+      throw createCoreError('IMAGE_NOT_FOUND');
+    }
+
+    try {
+      const resolvedSource = resolveExistingFilePath(image.library_path);
+      return {
+        ...image,
+        library_path: resolvedSource.filePath,
+      };
+    } catch (error) {
+      throw normalizeExportError(error, 'IMAGE_FILE_MISSING');
+    }
+  }
+
+  copyImageFileToDestination(sourcePath, destinationPath) {
+    try {
+      copyFile(sourcePath, destinationPath);
+    } catch (error) {
+      throw normalizeExportError(error, 'EXPORT_FAILED');
+    }
+  }
+
+  writeExportMetadata(imageId, outputPath) {
+    return this.syncImageMetadataToXmp(imageId, outputPath);
+  }
+
+  tryWriteExportMetadata(imageId, outputPath) {
+    try {
+      return {
+        xmpSync: this.writeExportMetadata(imageId, outputPath),
+        warnings: [],
+      };
+    } catch (error) {
+      this.logger.error('export-metadata-write-failed', {
+        imageId,
+        outputPath,
+        error: String(error?.message || error),
+      });
+      return {
+        xmpSync: {
+          sidecarPath: '',
+          embedded: false,
+          writeMode: '',
+        },
+        warnings: [createExportMetadataWarning(error)],
+      };
+    }
+  }
+
   async refreshEmbeddingWithFallback(imageId) {
     try {
       await this.aiService.refreshEmbedding(imageId);
@@ -2679,57 +2773,58 @@ export class InspiraDBApp {
   }
 
   exportImage(imageId, destinationPath) {
-    const image = this.db.get(
-      `SELECT id, original_file_name, library_path
-       FROM images
-       WHERE id = :imageId`,
-      { imageId },
-    );
-
-    if (!image) {
-      throw new Error('IMAGE_NOT_FOUND');
-    }
+    const image = this.getExportImageRecord(imageId);
 
     if (!destinationPath) {
-      throw new Error('EXPORT_PATH_REQUIRED');
+      throw createCoreError('EXPORT_PATH_REQUIRED');
     }
 
     const outputPath = appendOriginalExtensionIfMissing(path.resolve(destinationPath), image.original_file_name);
-    copyFile(image.library_path, outputPath);
-    const xmpSync = this.syncImageMetadataToXmp(imageId, outputPath);
+    try {
+      this.copyImageFileToDestination(image.library_path, outputPath);
+    } catch (error) {
+      throw normalizeExportError(error, 'EXPORT_FAILED');
+    }
+    const { xmpSync, warnings } = this.tryWriteExportMetadata(imageId, outputPath);
 
     return {
+      canceled: false,
       imageId,
       filePath: outputPath,
       sidecarPath: xmpSync.sidecarPath,
       embedded: xmpSync.embedded,
       writeMode: xmpSync.writeMode,
+      warnings,
     };
   }
 
   exportImages(imageIds, destinationDir) {
-    const resolvedDir = resolveExistingFolderPath(destinationDir);
+    let resolvedDir = '';
+    try {
+      resolvedDir = resolveExistingFolderPath(destinationDir);
+    } catch (error) {
+      throw normalizeExportError(error, 'EXPORT_FAILED');
+    }
     const normalizedImageIds = normalizeImageIds(imageIds);
     if (!normalizedImageIds.length) {
-      throw new Error('EMPTY_EXPORT_SELECTION');
+      throw createCoreError('EMPTY_EXPORT_SELECTION');
     }
 
     const usedPaths = new Set();
     const exported = [];
     const failed = [];
+    let warningCount = 0;
 
     for (const imageId of normalizedImageIds) {
-      const image = this.db.get(
-        `SELECT id, original_file_name, library_path
-         FROM images
-         WHERE id = :imageId`,
-        { imageId },
-      );
-
-      if (!image) {
+      let image;
+      try {
+        image = this.getExportImageRecord(imageId);
+      } catch (error) {
+        const normalizedError = normalizeExportError(error, 'EXPORT_FAILED');
         failed.push({
           imageId,
-          reason: 'IMAGE_NOT_FOUND',
+          code: normalizedError.code || 'EXPORT_FAILED',
+          message: String(normalizedError.message || normalizedError.code || 'EXPORT_FAILED'),
         });
         continue;
       }
@@ -2750,29 +2845,34 @@ export class InspiraDBApp {
       usedPaths.add(outputPath.toLowerCase());
 
       try {
-        copyFile(image.library_path, outputPath);
-        const xmpSync = this.syncImageMetadataToXmp(image.id, outputPath);
+        this.copyImageFileToDestination(image.library_path, outputPath);
+        const { xmpSync, warnings } = this.tryWriteExportMetadata(image.id, outputPath);
+        warningCount += warnings.length;
         exported.push({
           imageId: image.id,
           filePath: outputPath,
           sidecarPath: xmpSync.sidecarPath,
           embedded: xmpSync.embedded,
           writeMode: xmpSync.writeMode,
+          warnings,
         });
       } catch (error) {
+        const normalizedError = normalizeExportError(error, 'EXPORT_FAILED');
         failed.push({
           imageId: image.id,
-          reason: error?.code || 'EXPORT_FAILED',
-          message: String(error?.message || error),
+          code: normalizedError.code || 'EXPORT_FAILED',
+          message: String(normalizedError.message || normalizedError.code || 'EXPORT_FAILED'),
         });
       }
     }
 
     return {
+      canceled: false,
       destinationDir: resolvedDir,
       requestedCount: normalizedImageIds.length,
       exportedCount: exported.length,
       failedCount: failed.length,
+      warningCount,
       exported,
       failed,
     };

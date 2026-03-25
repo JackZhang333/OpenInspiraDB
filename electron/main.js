@@ -6,6 +6,12 @@ import * as electron from 'electron';
 import { InspiraDBApp } from '../src/index.js';
 import { MAX_IMAGE_COUNT } from '../src/core/config.js';
 import { createLogger } from '../src/utils/logger.js';
+import {
+  getSecurityScopedBookmark,
+  hasDialogSelection,
+  withSecurityScopedAccess,
+  withSecurityScopedDialogOptions,
+} from './security-scoped.js';
 
 const {
   app,
@@ -29,6 +35,16 @@ function createAppError(code) {
   const error = new Error(code);
   error.code = code;
   return error;
+}
+
+function wrapMainProcessError(error, fallbackCode) {
+  if (error?.code || error?.message === fallbackCode) {
+    return error;
+  }
+
+  const wrapped = createAppError(fallbackCode);
+  wrapped.cause = error;
+  return wrapped;
 }
 
 function isImageLimitReachedError(error) {
@@ -107,6 +123,17 @@ function decorateImageDetail(detail) {
       thumbnail_data_url: fileToDataUrl(detail.image.thumbnail_path),
     },
   };
+}
+
+function sanitizeDialogFileName(fileName, fallback = 'image.jpg') {
+  const cleaned = String(fileName || '')
+    .trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_');
+  return cleaned || fallback;
+}
+
+async function withDialogScopedAccess(dialogResult, run) {
+  return withSecurityScopedAccess(app, getSecurityScopedBookmark(dialogResult), run);
 }
 
 function createMainWindow() {
@@ -202,12 +229,12 @@ function createMenu() {
 
 function registerIpcHandlers() {
   ipcMain.handle('inspiradb:import-folder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(mainWindow, withSecurityScopedDialogOptions({
       title: '选择要导入的图片文件夹',
       properties: ['openDirectory', 'createDirectory'],
-    });
+    }));
 
-    if (result.canceled || !result.filePaths.length) {
+    if (!hasDialogSelection(result)) {
       return { canceled: true };
     }
 
@@ -217,11 +244,11 @@ function registerIpcHandlers() {
     }
 
     try {
-      return await inspiraApp.importFolder(result.filePaths[0], {
+      return await withDialogScopedAccess(result, () => inspiraApp.importFolder(result.filePaths[0], {
         onProgress(progress) {
           emitImportProgress(progress);
         },
-      });
+      }));
     } catch (error) {
       if (isImageLimitReachedError(error)) {
         emitImportProgress({ mode: 'folder', phase: 'error', message: 'IMAGE_LIMIT_REACHED' });
@@ -235,13 +262,13 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('inspiradb:import-file', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(mainWindow, withSecurityScopedDialogOptions({
       title: '选择要导入的图片',
       properties: ['openFile'],
       filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
-    });
+    }));
 
-    if (result.canceled || !result.filePaths.length) {
+    if (!hasDialogSelection(result)) {
       return { canceled: true };
     }
 
@@ -253,7 +280,7 @@ function registerIpcHandlers() {
     emitImportProgress({ mode: 'single', phase: 'started', current: 0, total: 1 });
 
     try {
-      const importResult = await inspiraApp.importFile(result.filePaths[0]);
+      const importResult = await withDialogScopedAccess(result, () => inspiraApp.importFile(result.filePaths[0]));
       if (importResult?.status === 'imported' && importResult?.image?.id) {
         emitImportProgress({
           mode: 'single',
@@ -289,18 +316,32 @@ function registerIpcHandlers() {
 
   ipcMain.handle('inspiradb:export-image', async (_, imageId) => {
     const detail = inspiraApp.getImageDetail(imageId);
-    const saveResult = await dialog.showSaveDialog(mainWindow, {
-      title: '导出图片',
-      defaultPath: path.join(app.getPath('downloads'), detail.image.original_file_name),
-      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
-      showOverwriteConfirmation: true,
-    });
+    const defaultFileName = sanitizeDialogFileName(
+      detail?.image?.original_file_name,
+      `image-${Number(imageId) || 'export'}.jpg`,
+    );
+    let saveResult;
 
-    if (saveResult.canceled || !saveResult.filePath) {
+    try {
+      saveResult = await dialog.showSaveDialog(mainWindow, withSecurityScopedDialogOptions({
+        title: '导出图片',
+        defaultPath: path.join(app.getPath('downloads'), defaultFileName),
+        filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
+        showOverwriteConfirmation: true,
+      }));
+    } catch (error) {
+      throw wrapMainProcessError(error, 'EXPORT_DIALOG_FAILED');
+    }
+
+    if (!hasDialogSelection(saveResult)) {
       return { canceled: true };
     }
 
-    return inspiraApp.exportImage(imageId, saveResult.filePath);
+    try {
+      return await withDialogScopedAccess(saveResult, () => inspiraApp.exportImage(imageId, saveResult.filePath));
+    } catch (error) {
+      throw wrapMainProcessError(error, 'EXPORT_FAILED');
+    }
   });
 
   ipcMain.handle('inspiradb:export-images', async (_, payload = {}) => {
@@ -309,16 +350,25 @@ function registerIpcHandlers() {
       return { canceled: true, reason: 'EMPTY_EXPORT_SELECTION' };
     }
 
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: '选择导出目录',
-      properties: ['openDirectory', 'createDirectory'],
-    });
+    let result;
+    try {
+      result = await dialog.showOpenDialog(mainWindow, withSecurityScopedDialogOptions({
+        title: '选择导出目录',
+        properties: ['openDirectory', 'createDirectory'],
+      }));
+    } catch (error) {
+      throw wrapMainProcessError(error, 'EXPORT_DIALOG_FAILED');
+    }
 
-    if (result.canceled || !result.filePaths.length) {
+    if (!hasDialogSelection(result)) {
       return { canceled: true };
     }
 
-    return inspiraApp.exportImages(imageIds, result.filePaths[0]);
+    try {
+      return await withDialogScopedAccess(result, () => inspiraApp.exportImages(imageIds, result.filePaths[0]));
+    } catch (error) {
+      throw wrapMainProcessError(error, 'EXPORT_FAILED');
+    }
   });
 
   ipcMain.handle('inspiradb:copy-image', (_, imageId) => {

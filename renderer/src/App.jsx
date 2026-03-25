@@ -25,6 +25,7 @@ export default function App() {
     saving,
     reanalyzing,
     error,
+    toast,
     copiedImageId,
     loading,
     page,
@@ -52,6 +53,7 @@ export default function App() {
     copyImage,
     rebuildAnalysis,
     deleteSelected,
+    clearToast,
     init,
   } = useAppStore();
 
@@ -112,6 +114,26 @@ export default function App() {
   const shellGridClass = useMemo(() => (
     sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[320px_minmax(0,1fr)]'
   ), [sidebarCollapsed]);
+  const toastClasses = useMemo(() => {
+    if (toast?.type === 'warning') {
+      return {
+        container: 'border-amber-200 bg-white/95 text-amber-800',
+        button: 'text-amber-500/70 hover:bg-amber-50 hover:text-amber-700',
+      };
+    }
+
+    if (toast?.type === 'error') {
+      return {
+        container: 'border-rose-200 bg-white/95 text-rose-700',
+        button: 'text-rose-500/70 hover:bg-rose-50 hover:text-rose-700',
+      };
+    }
+
+    return {
+      container: 'border-emerald-200 bg-white/95 text-emerald-700',
+      button: 'text-emerald-500/70 hover:bg-emerald-50 hover:text-emerald-700',
+    };
+  }, [toast?.type]);
 
   const handleSubmitSearch = (overrideQuery) => {
     const finalQuery = overrideQuery !== undefined ? overrideQuery : queryDraft;
@@ -135,6 +157,22 @@ export default function App() {
         style={{ WebkitAppRegion: 'drag' }}
       />
       <div className={cn('relative grid h-full w-full gap-0 overflow-hidden pt-7 transition-[grid-template-columns] duration-300', shellGridClass)}>
+        {toast ? (
+          <div className="pointer-events-none absolute left-1/2 top-12 z-40 -translate-x-1/2">
+            <div className={cn('pointer-events-auto flex items-center gap-3 rounded-full border px-4 py-2 text-sm shadow-lg backdrop-blur', toastClasses.container)}>
+              <span>{toast.message}</span>
+              <button
+                type="button"
+                onClick={clearToast}
+                className={cn('rounded-full p-1 transition-colors', toastClasses.button)}
+                aria-label={t('common.close')}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="min-h-0">
           <AppSidebar
             collapsed={sidebarCollapsed}

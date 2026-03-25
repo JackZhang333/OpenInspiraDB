@@ -1,7 +1,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import zhCN from './locales/zh-CN.json';
-import en from './locales/en.json';
+import zhCN from './locales/zh-CN.json' with { type: 'json' };
+import en from './locales/en.json' with { type: 'json' };
 
 // Detect system language
 function detectSystemLanguage() {
@@ -19,7 +19,9 @@ function detectSystemLanguage() {
 
 // Get saved language or detect from system
 function getInitialLanguage() {
-  const saved = localStorage.getItem('language');
+  const saved = typeof localStorage !== 'undefined'
+    ? localStorage.getItem('language')
+    : null;
   if (saved && ['zh-CN', 'en'].includes(saved)) return saved;
   return detectSystemLanguage();
 }
