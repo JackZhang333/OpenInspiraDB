@@ -13,6 +13,7 @@ import {
   withSecurityScopedDialogOptions,
 } from './security-scoped.js';
 import { createSingleImageExportHandler } from './export-image.js';
+import { createFolderImportHandler } from './import-folder.js';
 
 const {
   app,
@@ -222,38 +223,19 @@ function createMenu() {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle('inspiradb:import-folder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, withSecurityScopedDialogOptions({
-      title: '选择要导入的图片文件夹',
-      properties: ['openDirectory', 'createDirectory'],
-    }));
-
-    if (!hasDialogSelection(result)) {
-      return { canceled: true };
-    }
-
-    if (inspiraApp.getImageCount() >= MAX_IMAGE_COUNT) {
-      await showImageLimitReachedDialog();
-      return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
-    }
-
-    try {
-      return await withDialogScopedAccess(result, () => inspiraApp.importFolder(result.filePaths[0], {
-        onProgress(progress) {
-          emitImportProgress(progress);
-        },
-      }));
-    } catch (error) {
-      if (isImageLimitReachedError(error)) {
-        emitImportProgress({ mode: 'folder', phase: 'error', message: 'IMAGE_LIMIT_REACHED' });
-        await showImageLimitReachedDialog();
-        return { canceled: true, reason: 'IMAGE_LIMIT_REACHED' };
-      }
-
-      emitImportProgress({ mode: 'folder', phase: 'error', message: String(error?.message || error) });
-      throw error;
-    }
-  });
+  ipcMain.handle('inspiradb:import-folder', createFolderImportHandler({
+    dialog,
+    getMainWindow: () => mainWindow,
+    getInspiraApp: () => inspiraApp,
+    withScopedAccess: withDialogScopedAccess,
+    withSecurityScopedDialogOptions,
+    hasDialogSelection,
+    maxImageCount: MAX_IMAGE_COUNT,
+    showImageLimitReachedDialog,
+    emitImportProgress,
+    isImageLimitReachedError,
+    logger,
+  }));
 
   ipcMain.handle('inspiradb:import-file', async () => {
     const result = await dialog.showOpenDialog(mainWindow, withSecurityScopedDialogOptions({
