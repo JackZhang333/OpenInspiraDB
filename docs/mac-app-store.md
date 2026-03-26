@@ -49,7 +49,6 @@ Then open the generated app from the `release/` directory and verify:
 - image import from the system file picker
 - folder import from the system file picker
 - local search and database writes
-- API key save/load
 - cloud analysis requests
 - single-image export from the detail panel
 - batch export from the sidebar
@@ -60,6 +59,18 @@ For App Review regressions, validate both:
 
 - a clean install after removing any previous local app build
 - an update-over-previous-install path that preserves existing user data
+
+## Local data and reinstall recovery
+
+- App data is stored under Electron `userData`.
+- The current direct-distribution build defaults to `~/Library/Application Support/InspiraDB/`.
+- Historical same-channel installs may have used `~/Library/Application Support/意图集/`.
+- On startup, the app now checks both `InspiraDB` and `意图集` when reconnecting to an existing same-channel library.
+- If automatic recovery fails, inspect:
+  - `inspiradb.sqlite`
+  - `library/`
+  - `thumbnails/`
+- This recovery flow does not move data between DMG and Mac App Store containers.
 
 ## DMG
 
@@ -95,7 +106,7 @@ It will print the generated `CFBundleVersion`, verify the universal architecture
 
 - Provide screenshots for macOS.
 - Fill in App Privacy details for optional cloud image analysis.
-- Mention in review notes that image upload only happens when users enable cloud analysis and provide their own API key.
+- Mention in review notes that image upload only happens during cloud analysis.
 - Confirm export works in the MAS-signed build on a clean install and after updating over a previous build.
 - Do not configure an in-app auto-updater for the App Store build.
 - Replace the placeholder `appId` in `package.json` with your final Bundle ID before submission.

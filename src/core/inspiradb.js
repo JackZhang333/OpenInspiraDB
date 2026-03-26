@@ -16,6 +16,7 @@ import {
   isSupportedImageFile,
   copyFile,
   createThumbnailPlaceholder,
+  createThumbnailPlaceholderSync,
   buildLibraryPath,
   buildThumbnailPath,
   removeFileIfExists,
@@ -535,12 +536,15 @@ export class InspiraDBApp {
 
     this.aiService = new RoutedAiService(this.db, this.logger, {
       modelConfig: this.modelConfig,
+      resolveImageForRead: this.resolveReadableImageRecord.bind(this),
     });
     this.queue = new AnalysisQueue({
       db: this.db,
       aiService: this.aiService,
       logger: this.logger,
     });
+
+    this.reconcileLegacyImageRelations();
 
     if (autoStartQueue) {
       this.queue.start();
@@ -550,6 +554,416 @@ export class InspiraDBApp {
   close() {
     this.queue.stop();
     this.db.close();
+  }
+
+  countImageTagsBySource(imageId, source) {
+    const row = this.db.get(
+      `SELECT COUNT(*) AS total
+       FROM image_tags
+       WHERE image_id = :imageId
+         AND source = :source`,
+      { imageId, source },
+    );
+    return Number(row?.total || 0);
+  }
+
+  hasOpenAnalysisJob(imageId, jobType) {
+    return Boolean(this.db.get(
+      `SELECT id
+       FROM analysis_jobs
+       WHERE image_id = :imageId
+         AND job_type = :jobType
+         AND status IN (:pending, :processing, :retrying)
+       LIMIT 1`,
+      {
+        imageId,
+        jobType,
+        pending: JOB_STATUS.PENDING,
+        processing: JOB_STATUS.PROCESSING,
+        retrying: JOB_STATUS.RETRYING,
+      },
+    )?.id);
+  }
+
+  repairActiveCaptionRelation(image) {
+    const currentCaption = image?.active_caption_id
+      ? this.db.get(
+        `SELECT id, image_id, is_active, source
+         FROM captions
+         WHERE id = :captionId
+         LIMIT 1`,
+        { captionId: image.active_caption_id },
+      )
+      : null;
+
+    if (currentCaption?.id && Number(currentCaption.image_id) === Number(image.id) && Number(currentCaption.is_active) === 1) {
+      return {
+        captionId: Number(currentCaption.id),
+        repaired: false,
+      };
+    }
+
+    const preferredCaption = this.db.get(
+      `SELECT id, image_id, source, is_active
+       FROM captions
+       WHERE image_id = :imageId
+       ORDER BY CASE WHEN is_active = 1 THEN 0 ELSE 1 END ASC,
+                CASE WHEN source = 'user' THEN 0 ELSE 1 END ASC,
+                created_at DESC,
+                id DESC
+       LIMIT 1`,
+      { imageId: image.id },
+    );
+
+    if (!preferredCaption?.id) {
+      return {
+        captionId: 0,
+        repaired: false,
+      };
+    }
+
+    const now = nowIso();
+    this.db.transaction(() => {
+      this.db.run(
+        `UPDATE captions
+         SET is_active = CASE WHEN id = :captionId THEN 1 ELSE 0 END,
+             updated_at = :updatedAt
+         WHERE image_id = :imageId`,
+        {
+          imageId: image.id,
+          captionId: Number(preferredCaption.id),
+          updatedAt: now,
+        },
+      );
+
+      this.db.run(
+        `UPDATE images
+         SET active_caption_id = :captionId,
+             updated_at = :updatedAt
+         WHERE id = :imageId`,
+        {
+          imageId: image.id,
+          captionId: Number(preferredCaption.id),
+          updatedAt: now,
+        },
+      );
+    });
+
+    this.logger.info('legacy-image-caption-repaired', {
+      imageId: image.id,
+      captionId: Number(preferredCaption.id),
+    });
+
+    return {
+      captionId: Number(preferredCaption.id),
+      repaired: true,
+    };
+  }
+
+  updateImageActiveTagSource(imageId, nextSource) {
+    const normalizedSource = nextSource === 'user' ? 'user' : 'ai';
+    this.db.run(
+      `UPDATE images
+       SET active_tag_source = :activeTagSource,
+           updated_at = :updatedAt
+       WHERE id = :imageId`,
+      {
+        imageId,
+        activeTagSource: normalizedSource,
+        updatedAt: nowIso(),
+      },
+    );
+  }
+
+  markLegacyImageRepairFailed(imageId, reason) {
+    this.db.run(
+      `UPDATE images
+       SET analysis_status = :failed,
+           updated_at = :updatedAt
+       WHERE id = :imageId`,
+      {
+        imageId,
+        failed: IMAGE_STATUS.FAILED,
+        updatedAt: nowIso(),
+      },
+    );
+
+    this.logger.error('legacy-image-repair-failed', {
+      imageId,
+      reason,
+    });
+  }
+
+  queueLegacyImageAnalysisRepair(imageId, reason) {
+    if (this.hasOpenAnalysisJob(imageId, 'analyze_image')) {
+      return false;
+    }
+
+    this.createAnalysisJob(imageId, { jobType: 'analyze_image' });
+    this.logger.info('legacy-image-analysis-requeued', {
+      imageId,
+      reason,
+    });
+    return true;
+  }
+
+  queueLegacyEmbeddingRepair(imageId, reason) {
+    if (this.hasOpenAnalysisJob(imageId, 'refresh_embedding')) {
+      return false;
+    }
+
+    const now = nowIso();
+    this.db.transaction(() => {
+      this.db.run(
+        `UPDATE images
+         SET needs_embedding_refresh = 1,
+             updated_at = :updatedAt
+         WHERE id = :imageId`,
+        {
+          imageId,
+          updatedAt: now,
+        },
+      );
+
+      this.createAnalysisJob(imageId, {
+        jobType: 'refresh_embedding',
+        maxRetryCount: 2,
+        asTransaction: true,
+      });
+    });
+
+    this.logger.info('legacy-image-embedding-requeued', {
+      imageId,
+      reason,
+    });
+    return true;
+  }
+
+  reconcileLegacyImageRelations() {
+    const images = this.db.all(
+      `SELECT id,
+              source_path,
+              library_path,
+              thumbnail_path,
+              active_caption_id,
+              active_tag_source,
+              analysis_status,
+              needs_embedding_refresh
+       FROM images`,
+    );
+
+    const summary = {
+      scannedCount: images.length,
+      repairedCaptionCount: 0,
+      switchedTagSourceCount: 0,
+      requeuedAnalysisCount: 0,
+      requeuedEmbeddingCount: 0,
+      failedCount: 0,
+    };
+
+    for (const image of images) {
+      if (String(image.analysis_status || '') !== IMAGE_STATUS.READY) {
+        continue;
+      }
+
+      const captionRepair = this.repairActiveCaptionRelation(image);
+      if (captionRepair.repaired) {
+        summary.repairedCaptionCount += 1;
+      }
+
+      const userTagCount = this.countImageTagsBySource(image.id, 'user');
+      const aiTagCount = this.countImageTagsBySource(image.id, 'ai');
+      const normalizedTagSource = image.active_tag_source === 'user'
+        ? 'user'
+        : image.active_tag_source === 'ai'
+          ? 'ai'
+          : '';
+      let effectiveTagSource = normalizedTagSource || 'ai';
+
+      if (effectiveTagSource === 'ai' && aiTagCount === 0 && userTagCount > 0) {
+        this.updateImageActiveTagSource(image.id, 'user');
+        effectiveTagSource = 'user';
+        summary.switchedTagSourceCount += 1;
+        this.logger.info('legacy-image-tag-source-switched', {
+          imageId: image.id,
+          from: normalizedTagSource || 'invalid',
+          to: 'user',
+        });
+      } else if (!normalizedTagSource && aiTagCount > 0) {
+        this.updateImageActiveTagSource(image.id, 'ai');
+        effectiveTagSource = 'ai';
+        summary.switchedTagSourceCount += 1;
+      } else if (!normalizedTagSource && userTagCount > 0) {
+        this.updateImageActiveTagSource(image.id, 'user');
+        effectiveTagSource = 'user';
+        summary.switchedTagSourceCount += 1;
+      }
+
+      const needsAnalysisRepair = captionRepair.captionId <= 0
+        || (effectiveTagSource === 'ai' && aiTagCount === 0);
+
+      if (needsAnalysisRepair) {
+        const readableImage = this.resolveReadableImageRecord(image, {
+          ensureThumbnail: false,
+          throwIfMissing: false,
+        });
+
+        if (readableImage?.missing_file) {
+          this.markLegacyImageRepairFailed(image.id, 'RELATION_REBUILD_REQUIRES_IMAGE_FILE');
+          summary.failedCount += 1;
+          continue;
+        }
+
+        if (this.queueLegacyImageAnalysisRepair(image.id, captionRepair.captionId <= 0 ? 'MISSING_ACTIVE_CAPTION' : 'MISSING_AI_TAG_RELATIONS')) {
+          summary.requeuedAnalysisCount += 1;
+        }
+        continue;
+      }
+
+      const hasEmbedding = Boolean(this.db.get(
+        `SELECT id
+         FROM embeddings
+         WHERE image_id = :imageId
+         LIMIT 1`,
+        { imageId: image.id },
+      )?.id);
+
+      if (!hasEmbedding || Number(image.needs_embedding_refresh || 0) === 1) {
+        if (this.queueLegacyEmbeddingRepair(image.id, !hasEmbedding ? 'MISSING_EMBEDDING' : 'EMBEDDING_REFRESH_REQUESTED')) {
+          summary.requeuedEmbeddingCount += 1;
+        }
+      }
+    }
+
+    if (
+      summary.repairedCaptionCount > 0
+      || summary.switchedTagSourceCount > 0
+      || summary.requeuedAnalysisCount > 0
+      || summary.requeuedEmbeddingCount > 0
+      || summary.failedCount > 0
+    ) {
+      this.logger.info('legacy-image-reconciliation-finished', summary);
+    }
+
+    return summary;
+  }
+
+  getImageRecord(imageId) {
+    const image = this.db.get('SELECT * FROM images WHERE id = :imageId', { imageId });
+    if (!image) {
+      throw createCoreError('IMAGE_NOT_FOUND');
+    }
+    return image;
+  }
+
+  tryResolveReadableFilePath(filePath) {
+    try {
+      return resolveExistingFilePath(filePath).filePath;
+    } catch {
+      return '';
+    }
+  }
+
+  restoreLibraryFileFromSource(image, sourcePath) {
+    const targetPath = path.resolve(String(image?.library_path || ''));
+    if (!targetPath || !sourcePath) {
+      return '';
+    }
+
+    if (targetPath === sourcePath) {
+      return sourcePath;
+    }
+
+    try {
+      copyFile(sourcePath, targetPath);
+      const restoredPath = this.tryResolveReadableFilePath(targetPath);
+      if (restoredPath) {
+        this.logger.info('image-library-restored-from-source', {
+          imageId: Number(image?.id || 0),
+          sourcePath,
+          libraryPath: restoredPath,
+        });
+      }
+      return restoredPath;
+    } catch (error) {
+      this.logger.error('image-library-restore-failed', {
+        imageId: Number(image?.id || 0),
+        sourcePath,
+        libraryPath: targetPath,
+        error: String(error?.message || error),
+      });
+      return '';
+    }
+  }
+
+  ensureThumbnailForImage(image, sourcePath) {
+    const currentThumbnailPath = this.tryResolveReadableFilePath(image?.thumbnail_path);
+    if (currentThumbnailPath) {
+      return currentThumbnailPath;
+    }
+
+    if (!sourcePath || !image?.thumbnail_path) {
+      return '';
+    }
+
+    try {
+      createThumbnailPlaceholderSync(sourcePath, image.thumbnail_path);
+      const thumbnailPath = this.tryResolveReadableFilePath(image.thumbnail_path);
+      if (thumbnailPath) {
+        this.logger.info('image-thumbnail-restored', {
+          imageId: Number(image?.id || 0),
+          thumbnailPath,
+        });
+      }
+      return thumbnailPath;
+    } catch (error) {
+      this.logger.error('image-thumbnail-restore-failed', {
+        imageId: Number(image?.id || 0),
+        thumbnailPath: String(image.thumbnail_path || ''),
+        sourcePath,
+        error: String(error?.message || error),
+      });
+      return '';
+    }
+  }
+
+  resolveReadableImageRecord(imageOrId, options = {}) {
+    const {
+      ensureThumbnail = false,
+      throwIfMissing = true,
+    } = options;
+    const image = typeof imageOrId === 'object' && imageOrId
+      ? imageOrId
+      : this.getImageRecord(imageOrId);
+    const libraryPath = this.tryResolveReadableFilePath(image.library_path);
+    const sourcePath = this.tryResolveReadableFilePath(image.source_path);
+
+    let readableImagePath = libraryPath;
+    if (!readableImagePath && sourcePath) {
+      readableImagePath = this.restoreLibraryFileFromSource(image, sourcePath) || sourcePath;
+    }
+
+    if (!readableImagePath) {
+      if (throwIfMissing) {
+        throw createCoreError('IMAGE_FILE_MISSING');
+      }
+
+      return {
+        ...image,
+        missing_file: true,
+      };
+    }
+
+    const thumbnailPath = ensureThumbnail
+      ? this.ensureThumbnailForImage(image, readableImagePath) || readableImagePath
+      : this.tryResolveReadableFilePath(image.thumbnail_path) || image.thumbnail_path;
+
+    return {
+      ...image,
+      library_path: readableImagePath,
+      source_path: sourcePath || image.source_path,
+      thumbnail_path: thumbnailPath,
+    };
   }
 
   getImageCount() {
@@ -2401,17 +2815,21 @@ export class InspiraDBApp {
 
   attachActiveDataForImages(images) {
     return images.map((image) => {
+      const readableImage = this.resolveReadableImageRecord(image, {
+        ensureThumbnail: true,
+        throwIfMissing: false,
+      });
       const activeCaption = this.db.get(
         `SELECT id, content, source, created_at, updated_at
          FROM captions
          WHERE id = :captionId`,
-        { captionId: image.active_caption_id },
+        { captionId: readableImage.active_caption_id },
       );
 
-      const tagRecords = this.getEffectiveTagRecords(image.id);
+      const tagRecords = this.getEffectiveTagRecords(readableImage.id);
 
       return {
-        ...image,
+        ...readableImage,
         activeCaption,
         tags: tagRecords.map((tag) => tag.name),
         tagDetails: tagRecords,
@@ -2420,10 +2838,10 @@ export class InspiraDBApp {
   }
 
   getImageDetail(imageId) {
-    const image = this.db.get('SELECT * FROM images WHERE id = :imageId', { imageId });
-    if (!image) {
-      throw new Error('IMAGE_NOT_FOUND');
-    }
+    const image = this.resolveReadableImageRecord(imageId, {
+      ensureThumbnail: true,
+      throwIfMissing: true,
+    });
 
     const activeCaption = this.db.get('SELECT * FROM captions WHERE id = :captionId', {
       captionId: image.active_caption_id,
@@ -2495,10 +2913,13 @@ export class InspiraDBApp {
   }
 
   getImageWritebackMetadata(imageId) {
-    const image = this.db.get('SELECT id, library_path, active_caption_id FROM images WHERE id = :imageId', { imageId });
-    if (!image) {
-      throw new Error('IMAGE_NOT_FOUND');
-    }
+    const image = this.resolveReadableImageRecord(
+      this.db.get('SELECT id, source_path, library_path, thumbnail_path, active_caption_id FROM images WHERE id = :imageId', { imageId }),
+      {
+        ensureThumbnail: false,
+        throwIfMissing: true,
+      },
+    );
 
     const caption = image.active_caption_id
       ? this.db.get(
@@ -2549,11 +2970,16 @@ export class InspiraDBApp {
     }
 
     try {
-      const resolvedSource = resolveExistingFilePath(image.library_path);
-      return {
-        ...image,
-        library_path: resolvedSource.filePath,
-      };
+      return this.resolveReadableImageRecord(
+        {
+          ...this.getImageRecord(imageId),
+          original_file_name: image.original_file_name,
+        },
+        {
+          ensureThumbnail: true,
+          throwIfMissing: true,
+        },
+      );
     } catch (error) {
       throw normalizeExportError(error, 'IMAGE_FILE_MISSING');
     }

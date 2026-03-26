@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { SUPPORTED_EXTENSIONS } from '../core/config.js';
 
 export function ensureDirectories(paths) {
@@ -97,5 +97,27 @@ export async function createThumbnailPlaceholder(sourcePath, thumbnailPath) {
   }
 
   // 其他格式直接复制（或后续可以统一缩放）
+  copyFile(sourcePath, thumbnailPath);
+}
+
+export function createThumbnailPlaceholderSync(sourcePath, thumbnailPath) {
+  const ext = path.extname(sourcePath).toLowerCase();
+
+  fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+
+  if (ext === '.heic') {
+    const result = spawnSync(
+      'sips',
+      ['-s', 'format', 'jpeg', '-s', 'formatOptions', '80', '-Z', '400', sourcePath, '--out', thumbnailPath],
+      { encoding: 'utf8' },
+    );
+
+    if (result.status === 0) {
+      return;
+    }
+
+    console.error('HEIC thumbnail conversion failed:', result.stderr || result.stdout || `exit ${result.status}`);
+  }
+
   copyFile(sourcePath, thumbnailPath);
 }

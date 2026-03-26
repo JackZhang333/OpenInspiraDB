@@ -28,13 +28,20 @@ function insertExportableImage(app, {
   fileName = 'image.png',
   content = 'fake-image-content',
   createSource = true,
+  createLibrary = createSource,
+  sourcePath = '',
 } = {}) {
   const now = '2026-03-25T10:00:00.000Z';
+  const resolvedSourcePath = sourcePath || path.join(os.tmpdir(), fileName);
   const libraryPath = path.join(app.paths.libraryRootPath, fileName);
   const thumbnailPath = path.join(app.paths.thumbnailRootPath, `${fileName}.thumb`);
 
-  fs.mkdirSync(path.dirname(libraryPath), { recursive: true });
   if (createSource) {
+    fs.mkdirSync(path.dirname(resolvedSourcePath), { recursive: true });
+    fs.writeFileSync(resolvedSourcePath, content);
+  }
+  if (createLibrary) {
+    fs.mkdirSync(path.dirname(libraryPath), { recursive: true });
     fs.writeFileSync(libraryPath, content);
   }
 
@@ -70,11 +77,11 @@ function insertExportableImage(app, {
     )`,
     {
       fileName,
-      sourcePath: `/tmp/${fileName}`,
+      sourcePath: resolvedSourcePath,
       libraryPath,
       thumbnailPath,
       md5Hash: `${fileName}-${Date.now()}-${Math.random()}`,
-      fileSize: createSource ? Buffer.byteLength(content) : 0,
+      fileSize: (createSource || createLibrary) ? Buffer.byteLength(content) : 0,
       createdAt: now,
       updatedAt: now,
     },
@@ -130,6 +137,35 @@ test('exportImage reports missing library files with a stable code', () => {
       () => app.exportImage(imageId, path.join(rootDir, 'exports', 'missing-copy')),
       (error) => error?.code === 'IMAGE_FILE_MISSING',
     );
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('exportImage heals the library copy from source_path before exporting', () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    const sourcePath = path.join(rootDir, 'source-images', 'recoverable.png');
+    const imageId = insertExportableImage(app, {
+      fileName: 'recoverable.png',
+      content: 'recoverable-content',
+      createSource: true,
+      createLibrary: false,
+      sourcePath,
+    });
+
+    const result = app.exportImage(imageId, path.join(rootDir, 'exports', 'recoverable-copy.png'));
+    const storedImage = app.db.get(
+      'SELECT library_path, thumbnail_path FROM images WHERE id = :imageId',
+      { imageId },
+    );
+
+    assert.equal(result.canceled, false);
+    assert.equal(fs.existsSync(result.filePath), true);
+    assert.equal(fs.existsSync(storedImage.library_path), true);
+    assert.equal(fs.existsSync(storedImage.thumbnail_path), true);
+    assert.equal(fs.readFileSync(storedImage.library_path, 'utf8'), 'recoverable-content');
   } finally {
     disposeTestApp(app, rootDir);
   }

@@ -14,6 +14,7 @@ import {
 } from './security-scoped.js';
 import { createSingleImageExportHandler } from './export-image.js';
 import { createFolderImportHandler } from './import-folder.js';
+import { resolveCompatibleUserDataPath } from './user-data-path.js';
 
 const {
   app,
@@ -156,7 +157,10 @@ function createMainWindow() {
 }
 
 function createInspiraApp() {
-  const userDataPath = app.getPath('userData');
+  const userDataPath = resolveCompatibleUserDataPath({
+    userDataPath: app.getPath('userData'),
+    logger,
+  });
   return new InspiraDBApp({
     dbPath: path.join(userDataPath, 'inspiradb.sqlite'),
     libraryRootPath: path.join(userDataPath, 'library'),

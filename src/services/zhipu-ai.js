@@ -401,6 +401,9 @@ export class ZhipuAiService {
     this.db = db;
     this.logger = logger;
     this.modelConfig = options.modelConfig || defaultModelConfig;
+    this.resolveImageForRead = typeof options.resolveImageForRead === 'function'
+      ? options.resolveImageForRead
+      : null;
   }
 
   getSettings() {
@@ -469,7 +472,9 @@ export class ZhipuAiService {
   }
 
   async analyzeImage(imageId) {
-    const image = this.db.get('SELECT * FROM images WHERE id = :imageId', { imageId });
+    const image = this.resolveImageForRead
+      ? this.resolveImageForRead(imageId, { ensureThumbnail: true })
+      : this.db.get('SELECT * FROM images WHERE id = :imageId', { imageId });
     if (!image) {
       const error = new Error('IMAGE_NOT_FOUND');
       error.code = 'IMAGE_NOT_FOUND';

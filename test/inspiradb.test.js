@@ -248,6 +248,111 @@ function insertReadyImageWithTagIds(app, {
   return imageId;
 }
 
+function insertLegacyReadyImage(app, {
+  fileName,
+  hash,
+  sourcePath,
+  libraryPath,
+  thumbnailPath,
+  activeTagSource = 'ai',
+  activeCaptionId = null,
+  analysisStatus = 'ready',
+  needsEmbeddingRefresh = 0,
+  updatedAt = '2026-03-18T10:00:00.000Z',
+}) {
+  const createdAt = '2026-03-18T09:00:00.000Z';
+  const result = app.db.run(
+    `INSERT INTO images (
+      original_file_name,
+      source_path,
+      library_path,
+      thumbnail_path,
+      md5_hash,
+      file_size,
+      width,
+      height,
+      import_status,
+      analysis_status,
+      active_caption_id,
+      active_tag_source,
+      needs_embedding_refresh,
+      created_at,
+      updated_at
+    ) VALUES (
+      :fileName,
+      :sourcePath,
+      :libraryPath,
+      :thumbnailPath,
+      :hash,
+      100,
+      NULL,
+      NULL,
+      'imported',
+      :analysisStatus,
+      :activeCaptionId,
+      :activeTagSource,
+      :needsEmbeddingRefresh,
+      :createdAt,
+      :updatedAt
+    )`,
+    {
+      fileName,
+      sourcePath,
+      libraryPath,
+      thumbnailPath,
+      hash,
+      analysisStatus,
+      activeCaptionId,
+      activeTagSource,
+      needsEmbeddingRefresh,
+      createdAt,
+      updatedAt,
+    },
+  );
+
+  return Number(result.lastInsertRowid);
+}
+
+function insertCaption(app, imageId, {
+  content,
+  source = 'ai',
+  isActive = 1,
+  createdAt = '2026-03-18T09:30:00.000Z',
+  updatedAt = createdAt,
+}) {
+  const result = app.db.run(
+    `INSERT INTO captions (
+      image_id,
+      content,
+      source,
+      is_active,
+      model_provider,
+      model_name,
+      created_at,
+      updated_at
+    ) VALUES (
+      :imageId,
+      :content,
+      :source,
+      :isActive,
+      'zhipu',
+      'glm-test-vision',
+      :createdAt,
+      :updatedAt
+    )`,
+    {
+      imageId,
+      content,
+      source,
+      isActive,
+      createdAt,
+      updatedAt,
+    },
+  );
+
+  return Number(result.lastInsertRowid);
+}
+
 test('import -> analyze -> search -> user override rules', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-test-'));
   const app = createTestApp({ rootDir: root, autoStartQueue: true });
@@ -523,6 +628,258 @@ test('startup cleans unused preset tags but preserves used preset tags', async (
        LIMIT 1`,
     );
     assert.equal(removedUnusedParent, undefined);
+  } finally {
+    app.close();
+  }
+});
+
+test('getImageDetail restores missing library files and thumbnails from source_path', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-detail-recovery-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const sourceDir = path.join(root, 'fixtures');
+    fs.mkdirSync(sourceDir, { recursive: true });
+
+    const sourceFile = path.join(sourceDir, 'recover-detail.jpg');
+    fs.writeFileSync(sourceFile, Buffer.from('recover-detail-content'));
+
+    const importResult = await app.importFile(sourceFile);
+    assert.equal(importResult.status, 'imported');
+
+    const storedImage = app.db.get(
+      `SELECT library_path, thumbnail_path
+       FROM images
+       WHERE id = :imageId`,
+      { imageId: importResult.image.id },
+    );
+    fs.unlinkSync(storedImage.library_path);
+    fs.unlinkSync(storedImage.thumbnail_path);
+
+    const detail = app.getImageDetail(importResult.image.id);
+
+    assert.equal(fs.existsSync(storedImage.library_path), true);
+    assert.equal(fs.existsSync(storedImage.thumbnail_path), true);
+    assert.equal(detail.image.library_path, storedImage.library_path);
+    assert.equal(detail.image.thumbnail_path, storedImage.thumbnail_path);
+  } finally {
+    app.close();
+  }
+});
+
+test('rebuildImageAnalysis restores missing library files before reanalysis', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-analysis-recovery-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: true });
+
+  try {
+    const sourceDir = path.join(root, 'fixtures');
+    fs.mkdirSync(sourceDir, { recursive: true });
+
+    const sourceFile = path.join(sourceDir, 'recover-analysis.jpg');
+    fs.writeFileSync(sourceFile, Buffer.from('recover-analysis-content'));
+
+    const importResult = await app.importFile(sourceFile);
+    assert.equal(importResult.status, 'imported');
+    await waitForImageStatus(app, importResult.image.id, 'ready', 8000);
+
+    const storedImage = app.db.get(
+      `SELECT library_path, thumbnail_path
+       FROM images
+       WHERE id = :imageId`,
+      { imageId: importResult.image.id },
+    );
+    fs.unlinkSync(storedImage.library_path);
+    fs.unlinkSync(storedImage.thumbnail_path);
+
+    const rebuildResult = await app.rebuildImageAnalysis(importResult.image.id);
+
+    assert.equal(rebuildResult.status, 'ready');
+    assert.equal(fs.existsSync(storedImage.library_path), true);
+    assert.equal(fs.existsSync(storedImage.thumbnail_path), true);
+  } finally {
+    await waitForQueueIdle(app);
+    app.close();
+  }
+});
+
+test('reconcileLegacyImageRelations repairs active caption links and rebuilds missing embeddings', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-legacy-caption-repair-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const parentTag = app.createTag({ name: '修复测试分组', level: 1 });
+    const childTag = app.createTag({ name: '修复测试标签', level: 2, parentId: parentTag.id });
+    const sourcePath = path.join(root, 'fixtures', 'legacy-caption.jpg');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, Buffer.from('legacy-caption-content'));
+
+    const imageId = insertLegacyReadyImage(app, {
+      fileName: 'legacy-caption.jpg',
+      hash: 'legacy-caption-hash',
+      sourcePath,
+      libraryPath: sourcePath,
+      thumbnailPath: `${sourcePath}.thumb`,
+      activeTagSource: 'user',
+      activeCaptionId: null,
+    });
+    const captionId = insertCaption(app, imageId, {
+      content: '这是旧库里保留下来的人工描述',
+      source: 'user',
+      isActive: 0,
+    });
+    app.db.run(
+      `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+       VALUES (:imageId, :tagId, 'user', '2026-03-18T09:35:00.000Z')`,
+      {
+        imageId,
+        tagId: childTag.id,
+      },
+    );
+
+    const summary = app.reconcileLegacyImageRelations();
+    assert.equal(summary.repairedCaptionCount, 1);
+    assert.equal(summary.requeuedEmbeddingCount, 1);
+
+    app.queue.start();
+    await waitForQueueIdle(app);
+
+    const repairedImage = app.db.get(
+      `SELECT active_caption_id
+       FROM images
+       WHERE id = :imageId`,
+      { imageId },
+    );
+    const repairedCaption = app.db.get(
+      `SELECT is_active
+       FROM captions
+       WHERE id = :captionId`,
+      { captionId },
+    );
+    const embedding = app.db.get(
+      `SELECT vector
+       FROM embeddings
+       WHERE image_id = :imageId`,
+      { imageId },
+    );
+
+    assert.equal(repairedImage.active_caption_id, captionId);
+    assert.equal(repairedCaption.is_active, 1);
+    assert.ok(embedding?.vector);
+  } finally {
+    await waitForQueueIdle(app);
+    app.close();
+  }
+});
+
+test('reconcileLegacyImageRelations requeues ready legacy images with missing ai tag relations', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-legacy-ai-repair-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const sourcePath = path.join(root, 'fixtures', 'legacy-ai-repair.jpg');
+    const libraryPath = path.join(root, 'data', 'library', 'legacy-ai-repair.jpg');
+    const thumbnailPath = path.join(root, 'data', 'thumbnails', 'legacy-ai-repair.jpg.thumb');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, Buffer.from('legacy-ai-repair-content'));
+
+    const imageId = insertLegacyReadyImage(app, {
+      fileName: 'legacy-ai-repair.jpg',
+      hash: 'legacy-ai-repair-hash',
+      sourcePath,
+      libraryPath,
+      thumbnailPath,
+      activeTagSource: 'ai',
+      activeCaptionId: null,
+    });
+    const captionId = insertCaption(app, imageId, {
+      content: '这是旧图的残留 AI 描述',
+      source: 'ai',
+      isActive: 1,
+    });
+    app.db.run(
+      `UPDATE images
+       SET active_caption_id = :captionId
+       WHERE id = :imageId`,
+      {
+        imageId,
+        captionId,
+      },
+    );
+
+    const summary = app.reconcileLegacyImageRelations();
+    assert.equal(summary.requeuedAnalysisCount, 1);
+
+    app.queue.start();
+    await waitForQueueIdle(app);
+
+    const detail = app.getImageDetail(imageId);
+    assert.ok(detail.effectiveTags.length > 0);
+
+    const filteredResult = await app.searchImages('', [detail.effectiveTags[0].id], 'and');
+    assert.ok(filteredResult.items.some((item) => item.id === imageId));
+  } finally {
+    await waitForQueueIdle(app);
+    app.close();
+  }
+});
+
+test('reconcileLegacyImageRelations switches broken ai tag source to existing user tags', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-legacy-tag-source-switch-test-'));
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    const parentTag = app.createTag({ name: '切换测试分组', level: 1 });
+    const userTag = app.createTag({ name: '切换测试标签', level: 2, parentId: parentTag.id });
+    const sourcePath = path.join(root, 'fixtures', 'legacy-tag-switch.jpg');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, Buffer.from('legacy-tag-switch-content'));
+
+    const imageId = insertLegacyReadyImage(app, {
+      fileName: 'legacy-tag-switch.jpg',
+      hash: 'legacy-tag-switch-hash',
+      sourcePath,
+      libraryPath: sourcePath,
+      thumbnailPath: `${sourcePath}.thumb`,
+      activeTagSource: 'ai',
+      activeCaptionId: null,
+    });
+    const captionId = insertCaption(app, imageId, {
+      content: '这是一个保留了人工标签的旧图',
+      source: 'user',
+      isActive: 1,
+    });
+    app.db.run(
+      `UPDATE images
+       SET active_caption_id = :captionId
+       WHERE id = :imageId`,
+      {
+        imageId,
+        captionId,
+      },
+    );
+    app.db.run(
+      `INSERT INTO image_tags (image_id, tag_id, source, created_at)
+       VALUES (:imageId, :tagId, 'user', '2026-03-18T09:35:00.000Z')`,
+      {
+        imageId,
+        tagId: userTag.id,
+      },
+    );
+
+    const summary = app.reconcileLegacyImageRelations();
+    assert.equal(summary.switchedTagSourceCount, 1);
+    assert.equal(summary.requeuedAnalysisCount, 0);
+
+    const repairedImage = app.db.get(
+      `SELECT active_tag_source
+       FROM images
+       WHERE id = :imageId`,
+      { imageId },
+    );
+    const filteredResult = await app.searchImages('', [userTag.id], 'and');
+
+    assert.equal(repairedImage.active_tag_source, 'user');
+    assert.ok(filteredResult.items.some((item) => item.id === imageId));
   } finally {
     app.close();
   }
@@ -1347,6 +1704,23 @@ test('database migration moves flat tags under the uncategorized parent', async 
     `INSERT INTO image_tags (image_id, tag_id, source, created_at)
      VALUES (1, 1, 'ai', '2026-03-18T10:00:00.000Z')`,
   ).run();
+  legacyDb.prepare(
+    `INSERT INTO app_settings (
+      api_provider,
+      api_key_ref,
+      cloud_analysis_enabled,
+      library_root_path,
+      created_at,
+      updated_at
+    ) VALUES (
+      'mock',
+      'legacy-key-ref',
+      0,
+      '/Volumes/Legacy Library',
+      '2026-03-18T10:00:00.000Z',
+      '2026-03-18T10:00:00.000Z'
+    )`,
+  ).run();
   legacyDb.close();
 
   const app = createTestApp({ rootDir: root, autoStartQueue: false });
@@ -1390,8 +1764,89 @@ test('database migration moves flat tags under the uncategorized parent', async 
        WHERE key = 'tag_filter_mode'`,
     );
     assert.equal(nextSetting?.value, 'and');
+
+    const legacyLibraryRootSetting = app.db.get(
+      `SELECT value
+       FROM app_settings
+       WHERE key = 'legacy_library_root_path'`,
+    );
+    assert.equal(legacyLibraryRootSetting?.value, '/Volumes/Legacy Library');
   } finally {
     app.close();
+  }
+});
+
+test('legacy library root repair is idempotent and does not overwrite an existing migrated value', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-legacy-settings-idempotent-test-'));
+  const dbPath = path.join(root, 'data', 'inspiradb.sqlite');
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  const legacyDb = new DatabaseSync(dbPath);
+  legacyDb.exec(`
+    CREATE TABLE images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_file_name TEXT NOT NULL,
+      source_path TEXT NOT NULL,
+      library_path TEXT NOT NULL,
+      thumbnail_path TEXT NOT NULL,
+      md5_hash TEXT NOT NULL UNIQUE,
+      file_size INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      import_status TEXT NOT NULL DEFAULT 'imported',
+      analysis_status TEXT NOT NULL DEFAULT 'ready',
+      active_caption_id INTEGER,
+      active_tag_source TEXT NOT NULL DEFAULT 'ai',
+      needs_embedding_refresh INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      language TEXT NOT NULL DEFAULT 'zh',
+      created_at TEXT NOT NULL,
+      UNIQUE(name, language)
+    );
+    CREATE TABLE app_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      api_provider TEXT NOT NULL DEFAULT 'mock',
+      api_key_ref TEXT,
+      cloud_analysis_enabled INTEGER NOT NULL DEFAULT 0,
+      library_root_path TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  legacyDb.prepare(
+    `INSERT INTO app_settings (
+      api_provider,
+      library_root_path,
+      created_at,
+      updated_at
+    ) VALUES (
+      'mock',
+      '/Volumes/Legacy Library',
+      '2026-03-18T10:00:00.000Z',
+      '2026-03-18T10:00:00.000Z'
+    )`,
+  ).run();
+  legacyDb.close();
+
+  const app = createTestApp({ rootDir: root, autoStartQueue: false });
+
+  try {
+    assert.equal(app.getSetting('legacy_library_root_path'), '/Volumes/Legacy Library');
+    app.setSetting('legacy_library_root_path', '/Users/apple/Custom Library');
+  } finally {
+    app.close();
+  }
+
+  const reopenedApp = createTestApp({ rootDir: root, autoStartQueue: false });
+  try {
+    assert.equal(reopenedApp.getSetting('legacy_library_root_path'), '/Users/apple/Custom Library');
+  } finally {
+    reopenedApp.close();
   }
 });
 

@@ -18,7 +18,7 @@
 
 【AI 功能说明】
 - AI 分析功能由第三方服务（智谱 AI）提供
-- 图片仅在分析时上传至智谱 API，分析结果和原始图片均存储在用户本地设备
+- 图片仅在分析时上传至智谱 API，分析结果和库内图片副本均存储在用户本地设备
 - 我们不在任何服务器上存储用户图片或数据
 
 【功能测试指南】
@@ -29,7 +29,9 @@
 5. 导出图片：在详情面板点击"导出"按钮
 
 【数据存储说明】
-- 所有图片数据存储在本地：~/Library/Application Support/InspiraDB/
+- 数据存储于应用的本地 `userData` 目录
+- 当前直装版默认路径：~/Library/Application Support/InspiraDB/
+- 历史版本可能使用目录名：~/Library/Application Support/意图集/
 - 支持离线使用，无需持续网络连接
 - AI 分析需要网络连接调用第三方 API
 
@@ -51,7 +53,7 @@ InspiraDB is a local image management tool for designers and creative profession
 
 【AI Feature Notice】
 - AI analysis is powered by third-party service (Zhipu AI)
-- Images are only uploaded during analysis; both original images and analysis results are stored locally on user's device
+- Images are only uploaded during analysis; both library copies and analysis results are stored locally on user's device
 - We do not store user images or data on any server
 
 【Testing Guide】
@@ -62,7 +64,9 @@ InspiraDB is a local image management tool for designers and creative profession
 5. Export: Click "Export" button in detail panel
 
 【Data Storage】
-- All data stored locally at: ~/Library/Application Support/InspiraDB/
+- Data is stored in the app's local `userData` directory
+- Current direct build default: ~/Library/Application Support/InspiraDB/
+- Historical builds may use: ~/Library/Application Support/意图集/
 - Works offline without continuous internet connection
 - AI analysis requires network to call third-party API
 
@@ -105,7 +109,7 @@ Test Account: No login required
 
 AI Feature Notice:
 - Uses third-party AI service (Zhipu AI) for image analysis
-- Images uploaded only during analysis, all data stored locally
+- Images uploaded only during analysis, all library data stored locally
 - No data uploaded to developer servers
 
 Testing Steps:
@@ -150,7 +154,9 @@ Contact: hey@yituji.cn
 我们的应用采用"本地优先"架构：
 
 1. 图片数据：
-   - 存储在用户设备的 ~/Library/Application Support/InspiraDB/ 目录
+   - 存储在应用本地 `userData` 目录中
+   - 当前直装版默认位于 ~/Library/Application Support/InspiraDB/
+   - 历史版本可能使用 ~/Library/Application Support/意图集/
    - 不会上传到任何服务器
 
 2. AI 分析：
@@ -232,7 +238,9 @@ Our application itself:
 Our app adopts a "local-first" architecture:
 
 1. Image Data:
-   - Stored in ~/Library/Application Support/InspiraDB/ on the user's device
+   - Stored in the app-local `userData` directory on the user's device
+   - Current direct build default is ~/Library/Application Support/InspiraDB/
+   - Historical builds may use ~/Library/Application Support/意图集/
    - Not uploaded to any servers
 
 2. AI Analysis:

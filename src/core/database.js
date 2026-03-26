@@ -193,6 +193,67 @@ function ensureAppSetting(db, key, value, updatedAt) {
   });
 }
 
+function listLegacyAppSettingsTables(db) {
+  return db.prepare(
+    `SELECT name
+     FROM sqlite_master
+     WHERE type = 'table'
+       AND name LIKE 'app_settings_legacy_v%'`,
+  ).all().map((row) => String(row?.name || ''));
+}
+
+function getLatestLegacyAppSettingsTable(db) {
+  const tables = listLegacyAppSettingsTables(db);
+  if (!tables.length) {
+    return '';
+  }
+
+  const scored = tables
+    .map((tableName) => {
+      const match = tableName.match(/_v(\d+)$/);
+      return {
+        tableName,
+        version: Number(match?.[1] || 0),
+      };
+    })
+    .sort((left, right) => right.version - left.version);
+
+  return scored[0]?.tableName || '';
+}
+
+function readLegacySettingValue(db, tableName, columnName) {
+  if (!tableName || !hasColumn(db, tableName, columnName)) {
+    return '';
+  }
+
+  const idColumn = hasColumn(db, tableName, 'id') ? quoteIdentifier('id') : 'rowid';
+  const updatedAtColumn = hasColumn(db, tableName, 'updated_at')
+    ? `COALESCE(${quoteIdentifier('updated_at')}, '')`
+    : "''";
+  const row = db.prepare(
+    `SELECT ${quoteIdentifier(columnName)} AS value
+     FROM ${quoteIdentifier(tableName)}
+     WHERE TRIM(COALESCE(${quoteIdentifier(columnName)}, '')) != ''
+     ORDER BY ${updatedAtColumn} DESC, ${idColumn} DESC
+     LIMIT 1`,
+  ).get();
+
+  return String(row?.value || '');
+}
+
+function repairLegacyAppSettings(db) {
+  const tableName = getLatestLegacyAppSettingsTable(db);
+  if (!tableName) {
+    return;
+  }
+
+  const updatedAt = nowIso();
+  const legacyLibraryRootPath = readLegacySettingValue(db, tableName, 'library_root_path');
+  if (legacyLibraryRootPath) {
+    ensureAppSetting(db, 'legacy_library_root_path', legacyLibraryRootPath, updatedAt);
+  }
+}
+
 function resolveMigrationConflictForUncategorized(db, updatedAt) {
   const conflictingTag = db.prepare(
     `SELECT id, name
@@ -377,6 +438,7 @@ export class InspiraDatabase {
     this.db.exec(SCHEMA_SQL);
     runMigrations(this.db);
     ensurePostMigrationIndexes(this.db);
+    repairLegacyAppSettings(this.db);
     this.db.exec(PRAGMA_SQL);
   }
 

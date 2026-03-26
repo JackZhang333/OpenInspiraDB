@@ -8,6 +8,7 @@ export class RoutedAiService {
     this.modelConfig = options.modelConfig || defaultModelConfig;
     this.zhipuService = new ZhipuAiService(db, logger, {
       modelConfig: this.modelConfig,
+      resolveImageForRead: options.resolveImageForRead,
     });
   }
 
