@@ -83,20 +83,35 @@ function insertExportableImage(app, {
   return Number(result.lastInsertRowid);
 }
 
-test('exportImage copies the file, appends the original extension, and writes metadata when possible', () => {
+test('exportImage copies the file to the explicit destination path and writes metadata when possible', () => {
   const { app, rootDir } = createTestApp();
 
   try {
     const imageId = insertExportableImage(app, { fileName: 'poster.png' });
-    const destinationBase = path.join(rootDir, 'exports', 'poster-copy');
-    const result = app.exportImage(imageId, destinationBase);
+    const destinationPath = path.join(rootDir, 'exports', 'poster-copy.png');
+    const result = app.exportImage(imageId, destinationPath);
 
     assert.equal(result.canceled, false);
-    assert.equal(result.filePath, `${destinationBase}.png`);
+    assert.equal(result.filePath, destinationPath);
     assert.deepEqual(result.warnings, []);
     assert.equal(fs.existsSync(result.filePath), true);
     assert.equal(fs.existsSync(result.sidecarPath), true);
     assert.equal(result.writeMode, 'sidecar');
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('exportImage does not append the original extension when the destination path omits one', () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    const imageId = insertExportableImage(app, { fileName: 'poster.png' });
+    const destinationPath = path.join(rootDir, 'exports', 'poster-copy');
+    const result = app.exportImage(imageId, destinationPath);
+
+    assert.equal(result.filePath, destinationPath);
+    assert.equal(fs.existsSync(destinationPath), true);
   } finally {
     disposeTestApp(app, rootDir);
   }

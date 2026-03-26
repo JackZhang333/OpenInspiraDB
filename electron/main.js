@@ -12,6 +12,7 @@ import {
   withSecurityScopedAccess,
   withSecurityScopedDialogOptions,
 } from './security-scoped.js';
+import { createSingleImageExportHandler } from './export-image.js';
 
 const {
   app,
@@ -123,13 +124,6 @@ function decorateImageDetail(detail) {
       thumbnail_data_url: fileToDataUrl(detail.image.thumbnail_path),
     },
   };
-}
-
-function sanitizeDialogFileName(fileName, fallback = 'image.jpg') {
-  const cleaned = String(fileName || '')
-    .trim()
-    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_');
-  return cleaned || fallback;
 }
 
 async function withDialogScopedAccess(dialogResult, run) {
@@ -314,35 +308,16 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('inspiradb:export-image', async (_, imageId) => {
-    const detail = inspiraApp.getImageDetail(imageId);
-    const defaultFileName = sanitizeDialogFileName(
-      detail?.image?.original_file_name,
-      `image-${Number(imageId) || 'export'}.jpg`,
-    );
-    let saveResult;
-
-    try {
-      saveResult = await dialog.showSaveDialog(mainWindow, withSecurityScopedDialogOptions({
-        title: '导出图片',
-        defaultPath: path.join(app.getPath('downloads'), defaultFileName),
-        filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
-        showOverwriteConfirmation: true,
-      }));
-    } catch (error) {
-      throw wrapMainProcessError(error, 'EXPORT_DIALOG_FAILED');
-    }
-
-    if (!hasDialogSelection(saveResult)) {
-      return { canceled: true };
-    }
-
-    try {
-      return await withDialogScopedAccess(saveResult, () => inspiraApp.exportImage(imageId, saveResult.filePath));
-    } catch (error) {
-      throw wrapMainProcessError(error, 'EXPORT_FAILED');
-    }
-  });
+  ipcMain.handle('inspiradb:export-image', createSingleImageExportHandler({
+    app,
+    dialog,
+    imageExtensions: IMAGE_EXTENSIONS,
+    getMainWindow: () => mainWindow,
+    getInspiraApp: () => inspiraApp,
+    withScopedAccess: withDialogScopedAccess,
+    wrapMainProcessError,
+    logger,
+  }));
 
   ipcMain.handle('inspiradb:export-images', async (_, payload = {}) => {
     const imageIds = Array.isArray(payload.imageIds) ? payload.imageIds : [];

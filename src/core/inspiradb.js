@@ -472,19 +472,6 @@ function sanitizeExportFileName(fileName, fallback = 'image.jpg') {
   return cleaned || fallback;
 }
 
-function appendOriginalExtensionIfMissing(filePath, originalFileName) {
-  if (path.extname(filePath)) {
-    return filePath;
-  }
-
-  const originalExt = path.extname(String(originalFileName || '')).toLowerCase();
-  if (!originalExt) {
-    return filePath;
-  }
-
-  return `${filePath}${originalExt}`;
-}
-
 function createCoreError(code, cause = null) {
   const error = new Error(code);
   error.code = code;
@@ -2779,7 +2766,7 @@ export class InspiraDBApp {
       throw createCoreError('EXPORT_PATH_REQUIRED');
     }
 
-    const outputPath = appendOriginalExtensionIfMissing(path.resolve(destinationPath), image.original_file_name);
+    const outputPath = path.resolve(destinationPath);
     try {
       this.copyImageFileToDestination(image.library_path, outputPath);
     } catch (error) {

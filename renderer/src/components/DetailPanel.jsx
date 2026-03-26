@@ -38,6 +38,30 @@ function groupSelectedTags(tagTree, selectedTagIds) {
     .filter((group) => group.children.length > 0);
 }
 
+function buildEditingTagTree(tagTree, draftTags) {
+  const draftTagsByParent = new Map();
+
+  for (const draftTag of draftTags || []) {
+    const parentId = Number(draftTag.parentId);
+    if (!draftTagsByParent.has(parentId)) {
+      draftTagsByParent.set(parentId, []);
+    }
+    draftTagsByParent.get(parentId).push({
+      ...draftTag,
+      usageCount: 0,
+      isDraft: true,
+    });
+  }
+
+  return (tagTree || []).map((group) => ({
+    ...group,
+    children: [
+      ...(group.children || []),
+      ...(draftTagsByParent.get(Number(group.id)) || []),
+    ],
+  }));
+}
+
 export function DetailPanel({
   detail,
   loading,
@@ -58,16 +82,35 @@ export function DetailPanel({
   const [selectedTagIds, setSelectedTagIds] = React.useState([]);
   const [newTagName, setNewTagName] = React.useState('');
   const [newTagParentId, setNewTagParentId] = React.useState('');
+  const [draftTags, setDraftTags] = React.useState([]);
   const [localError, setLocalError] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const draftTagIdRef = React.useRef(-1);
 
   React.useEffect(() => {
     setIsEditing(false);
     setCaption(detail?.activeCaption?.content || '');
     setSelectedTagIds((detail?.effectiveTags || []).map((tag) => Number(tag.id)));
+    setDraftTags([]);
     setNewTagName('');
     setLocalError('');
+    setIsSubmitting(false);
+    draftTagIdRef.current = -1;
     setNewTagParentId(tagTree?.[0]?.id ? String(tagTree[0].id) : '');
-  }, [detail?.image?.id, tagTree]);
+  }, [detail?.image?.id]);
+
+  React.useEffect(() => {
+    if (!newTagParentId && tagTree?.[0]?.id) {
+      setNewTagParentId(String(tagTree[0].id));
+    }
+  }, [newTagParentId, tagTree]);
+
+  const editingTagTree = React.useMemo(
+    () => buildEditingTagTree(tagTree, draftTags),
+    [tagTree, draftTags],
+  );
+  const selectedTagGroups = groupSelectedTags(isEditing ? editingTagTree : tagTree, selectedTagIds);
+  const isBusy = saving || isSubmitting;
 
   if (loading && !detail) {
     return (
@@ -99,8 +142,11 @@ export function DetailPanel({
   const resetDrafts = () => {
     setCaption(activeCaption?.content || '');
     setSelectedTagIds((effectiveTags || []).map((tag) => Number(tag.id)));
+    setDraftTags([]);
     setNewTagName('');
     setLocalError('');
+    setIsSubmitting(false);
+    draftTagIdRef.current = -1;
     setNewTagParentId(tagTree?.[0]?.id ? String(tagTree[0].id) : '');
   };
 
@@ -123,31 +169,43 @@ export function DetailPanel({
     ));
   };
 
-  const handleCreateTag = async () => {
+  const handleCreateTag = () => {
     const name = newTagName.trim();
     if (!name || !newTagParentId) {
       return;
     }
 
-    try {
-      const tag = await onCreateTag?.({
-        name,
-        level: 2,
-        parentId: Number(newTagParentId),
-      });
+    const existingTag = editingTagTree
+      .flatMap((group) => group.children || [])
+      .find((tag) => String(tag.name || '').trim() === name);
 
-      if (tag?.id) {
-        setSelectedTagIds((currentIds) => (
-          currentIds.includes(Number(tag.id))
-            ? currentIds
-            : [...currentIds, Number(tag.id)]
-        ));
-      }
+    if (existingTag?.id) {
+      setSelectedTagIds((currentIds) => (
+        currentIds.includes(Number(existingTag.id))
+          ? currentIds
+          : [...currentIds, Number(existingTag.id)]
+      ));
       setNewTagName('');
-      setLocalError('');
-    } catch (error) {
-      // Global error bar handles the message.
+      return;
     }
+
+    const nextDraftTagId = draftTagIdRef.current;
+    draftTagIdRef.current -= 1;
+
+    setDraftTags((currentTags) => [
+      ...currentTags,
+      {
+        id: nextDraftTagId,
+        name,
+        parentId: Number(newTagParentId),
+      },
+    ]);
+    setSelectedTagIds((currentIds) => (
+      currentIds.includes(nextDraftTagId)
+        ? currentIds
+        : [...currentIds, nextDraftTagId]
+    ));
+    setNewTagName('');
   };
 
   const handleSave = async () => {
@@ -162,15 +220,40 @@ export function DetailPanel({
     }
 
     setLocalError('');
+    setIsSubmitting(true);
 
     try {
+      const nextTagIds = selectedTagIds.filter((tagId) => Number(tagId) > 0);
+
+      for (const draftTag of draftTags) {
+        if (!selectedTagIds.includes(Number(draftTag.id))) {
+          continue;
+        }
+
+        const createdTag = await onCreateTag?.(
+          {
+            name: draftTag.name,
+            level: 2,
+            parentId: Number(draftTag.parentId),
+          },
+          { refresh: false },
+        );
+
+        if (createdTag?.id) {
+          nextTagIds.push(Number(createdTag.id));
+        }
+      }
+
       await onSaveMetadata(detail.image.id, {
         caption: trimmedCaption,
-        tagIds: selectedTagIds,
+        tagIds: Array.from(new Set(nextTagIds)),
       });
+      setDraftTags([]);
       setIsEditing(false);
     } catch (error) {
       // Store error is surfaced globally; keep edit mode so the user can retry.
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -185,8 +268,6 @@ export function DetailPanel({
 
     await onDelete?.();
   };
-
-  const selectedTagGroups = groupSelectedTags(tagTree, selectedTagIds);
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto">
@@ -301,7 +382,7 @@ export function DetailPanel({
                       type="button"
                       variant="secondary"
                       onClick={handleCreateTag}
-                      disabled={saving || !newTagName.trim() || !newTagParentId}
+                      disabled={isBusy || !newTagName.trim() || !newTagParentId}
                     >
                       <Plus className="mr-1.5 h-3.5 w-3.5" />
                       {t('detailPanel.add')}
@@ -310,7 +391,7 @@ export function DetailPanel({
                 </div>
 
                 <div className="space-y-3">
-                  {(tagTree || []).map((group) => (
+                  {editingTagTree.map((group) => (
                     <div key={group.id} className="rounded-2xl border border-clay/10 bg-white/80 p-4">
                       <div className="mb-3 text-sm font-semibold text-ink">{group.name}</div>
                       <div className="flex flex-wrap gap-2">
@@ -368,15 +449,15 @@ export function DetailPanel({
         {isEditing ? (
           <div className="flex flex-col gap-3">
             <div className="flex gap-2">
-              <Button type="button" className="flex-1" onClick={handleSave} disabled={saving}>
+              <Button type="button" className="flex-1" onClick={handleSave} disabled={isBusy}>
                 <Save className="mr-1.5 h-3.5 w-3.5" />
-                {saving ? t('detailPanel.actions.saving') : t('detailPanel.actions.save')}
+                {isBusy ? t('detailPanel.actions.saving') : t('detailPanel.actions.save')}
               </Button>
-              <Button type="button" variant="secondary" className="flex-1" onClick={handleCancelEditing} disabled={saving}>
+              <Button type="button" variant="secondary" className="flex-1" onClick={handleCancelEditing} disabled={isBusy}>
                 {t('detailPanel.actions.cancel')}
               </Button>
             </div>
-            <Button type="button" variant="danger" className="w-full" onClick={handleDelete} disabled={saving}>
+            <Button type="button" variant="danger" className="w-full" onClick={handleDelete} disabled={isBusy}>
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
               {t('detailPanel.actions.delete')}
             </Button>

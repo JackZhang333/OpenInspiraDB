@@ -12,6 +12,8 @@ async function loadFreshStoreModule() {
 async function createStoreHarness(options = {}) {
   const listeners = new Set();
   let searchCallCount = 0;
+  let detailCallCount = 0;
+  let createTagCallCount = 0;
   let lastSearchPayload = null;
   let currentItems = Array.isArray(options.initialItems) ? options.initialItems : [];
   const availableTags = Array.isArray(options.availableTags) ? options.availableTags : [];
@@ -68,6 +70,52 @@ async function createStoreHarness(options = {}) {
       async getFilterTags() {
         return availableTags;
       },
+      async getImageDetail(imageId) {
+        detailCallCount += 1;
+        if (typeof options.onGetImageDetail === 'function') {
+          return options.onGetImageDetail(imageId);
+        }
+
+        return options.detailResult ?? {
+          image: { id: imageId, original_file_name: 'detail.png' },
+          activeCaption: { content: 'detail caption' },
+          effectiveTags: [],
+        };
+      },
+      async createTag(payload) {
+        createTagCallCount += 1;
+        if (typeof options.onCreateTag === 'function') {
+          return options.onCreateTag(payload);
+        }
+
+        return options.createTagResult ?? { id: 88, ...payload };
+      },
+      async exportImage(imageId) {
+        if (typeof options.onExportImage === 'function') {
+          return options.onExportImage(imageId);
+        }
+
+        return options.exportImageResult ?? {
+          canceled: false,
+          imageId,
+          filePath: '/tmp/exported-image.jpg',
+          warnings: [],
+        };
+      },
+      async exportImages(imageIds) {
+        if (typeof options.onExportImages === 'function') {
+          return options.onExportImages(imageIds);
+        }
+
+        return options.exportImagesResult ?? {
+          canceled: false,
+          exportedCount: Array.isArray(imageIds) ? imageIds.length : 0,
+          failedCount: 0,
+          warningCount: 0,
+          exported: [],
+          failed: [],
+        };
+      },
     },
   };
 
@@ -86,11 +134,15 @@ async function createStoreHarness(options = {}) {
     importProgress: null,
     error: null,
     toast: null,
+    selectedImageId: options.initialSelectedImageId ?? null,
+    detail: options.initialDetail ?? null,
   });
 
   return {
     store,
     getSearchCallCount: () => searchCallCount,
+    getDetailCallCount: () => detailCallCount,
+    getCreateTagCallCount: () => createTagCallCount,
     getLastSearchPayload: () => lastSearchPayload,
   };
 }
@@ -195,4 +247,69 @@ test('single import stops correctly when the import request fails', async () => 
   assert.equal(state.importProgress, null);
   assert.equal(typeof state.error, 'string');
   assert.ok(state.error.length > 0);
+});
+
+test('single image export counts warnings from the result payload and shows a warning toast', async () => {
+  const harness = await createStoreHarness({
+    onExportImage: async (imageId) => ({
+      canceled: false,
+      imageId,
+      filePath: `/tmp/export-${imageId}.jpg`,
+      warnings: [{ code: 'EXPORT_METADATA_WRITE_FAILED' }],
+    }),
+  });
+
+  const result = await harness.store.getState().exportImage(42);
+
+  assert.equal(result.canceled, false);
+  assert.equal(result.imageId, 42);
+  assert.equal(harness.store.getState().saving, false);
+  assert.equal(harness.store.getState().toast?.type, 'warning');
+  assert.equal(typeof harness.store.getState().toast?.message, 'string');
+  assert.ok(harness.store.getState().toast.message.length > 0);
+});
+
+test('batch export can derive warning count from exported items when summary count is absent', async () => {
+  const harness = await createStoreHarness({
+    initialItems: [{ id: 7 }, { id: 8 }],
+    onExportImages: async () => ({
+      canceled: false,
+      exportedCount: 2,
+      failedCount: 0,
+      exported: [
+        { imageId: 7, warnings: [{ code: 'EXPORT_METADATA_WRITE_FAILED' }] },
+        { imageId: 8, warnings: [] },
+      ],
+      failed: [],
+    }),
+  });
+
+  const result = await harness.store.getState().exportCurrentResultBatch();
+
+  assert.equal(result.canceled, false);
+  assert.equal(harness.store.getState().saving, false);
+  assert.equal(harness.store.getState().toast?.type, 'warning');
+  assert.equal(typeof harness.store.getState().toast?.message, 'string');
+  assert.ok(harness.store.getState().toast.message.length > 0);
+});
+
+test('createTag can defer refresh so image edit drafts are saved in one submit', async () => {
+  const harness = await createStoreHarness({
+    initialSelectedImageId: 42,
+    onCreateTag: async (payload) => ({
+      id: 91,
+      ...payload,
+    }),
+  });
+
+  const result = await harness.store.getState().createTag(
+    { name: '新标签', level: 2, parentId: 5 },
+    { refresh: false },
+  );
+
+  assert.equal(result.id, 91);
+  assert.equal(harness.getCreateTagCallCount(), 1);
+  assert.equal(harness.getSearchCallCount(), 0);
+  assert.equal(harness.getDetailCallCount(), 0);
+  assert.equal(harness.store.getState().saving, false);
 });

@@ -156,6 +156,26 @@ function normalizeImportProgress(payload = {}) {
   };
 }
 
+function getExportWarningCount(result = {}) {
+  const warningCount = Number(result?.warningCount);
+  if (Number.isFinite(warningCount) && warningCount >= 0) {
+    return warningCount;
+  }
+
+  if (Array.isArray(result?.warnings)) {
+    return result.warnings.length;
+  }
+
+  if (Array.isArray(result?.exported)) {
+    return result.exported.reduce(
+      (count, item) => count + (Array.isArray(item?.warnings) ? item.warnings.length : 0),
+      0,
+    );
+  }
+
+  return 0;
+}
+
 function createSingleImportPendingProgress() {
   return normalizeImportProgress({
     mode: 'single',
@@ -499,12 +519,15 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
-  async createTag(payload) {
+  async createTag(payload, options = {}) {
+    const shouldRefresh = options.refresh !== false;
     set({ saving: true, error: null });
     try {
       const tag = await getBridge().createTag(payload);
-      await get().refreshSearch();
-      await get().reloadSelectedDetail();
+      if (shouldRefresh) {
+        await get().refreshSearch();
+        await get().reloadSelectedDetail();
+      }
       set({ saving: false });
       return tag;
     } catch (error) {
@@ -617,7 +640,7 @@ export const useAppStore = create((set, get) => ({
       const result = await callExportImages(imageIds);
       const exportedCount = Number(result?.exportedCount || 0);
       const failedCount = Number(result?.failedCount || 0);
-      const warningCount = Number(result?.warningCount || 0);
+      const warningCount = getExportWarningCount(result);
       if (!result?.canceled && (exportedCount > 0 || failedCount > 0 || warningCount > 0)) {
         const hasIssues = failedCount > 0 || warningCount > 0;
         get().showToast(
