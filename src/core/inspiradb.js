@@ -17,8 +17,11 @@ import {
   copyFile,
   createThumbnailPlaceholder,
   createThumbnailPlaceholderSync,
+  createPreviewPlaceholder,
+  createPreviewPlaceholderSync,
   buildLibraryPath,
   buildThumbnailPath,
+  buildPreviewPath,
   removeFileIfExists,
 } from '../utils/files.js';
 import { md5File } from '../utils/hash.js';
@@ -516,6 +519,7 @@ export class InspiraDBApp {
     dbPath,
     libraryRootPath,
     thumbnailRootPath,
+    previewRootPath,
     autoStartQueue = true,
     modelConfig = defaultModelConfig,
   } = {}) {
@@ -525,9 +529,15 @@ export class InspiraDBApp {
       dbPath: dbPath || defaults.dbPath,
       libraryRootPath: libraryRootPath || defaults.libraryRootPath,
       thumbnailRootPath: thumbnailRootPath || defaults.thumbnailRootPath,
+      previewRootPath: previewRootPath || defaults.previewRootPath,
     };
 
-    ensureDirectories([path.dirname(this.paths.dbPath), this.paths.libraryRootPath, this.paths.thumbnailRootPath]);
+    ensureDirectories([
+      path.dirname(this.paths.dbPath),
+      this.paths.libraryRootPath,
+      this.paths.thumbnailRootPath,
+      this.paths.previewRootPath,
+    ]);
 
     this.logger = createLogger('inspiradb');
     this.db = new InspiraDatabase(this.paths.dbPath);
@@ -927,9 +937,60 @@ export class InspiraDBApp {
     }
   }
 
+  buildPreviewPathForImage(image) {
+    const md5Hash = String(image?.md5_hash || '').trim();
+    if (!md5Hash) {
+      return '';
+    }
+
+    return buildPreviewPath(this.paths.previewRootPath, md5Hash);
+  }
+
+  ensurePreviewForImage(image, sourcePath) {
+    const sourceExt = path.extname(String(sourcePath || image?.library_path || image?.original_file_name || '')).toLowerCase();
+    if (sourceExt !== '.heic') {
+      return '';
+    }
+
+    const previewPath = this.buildPreviewPathForImage(image);
+    if (!previewPath) {
+      return '';
+    }
+
+    const currentPreviewPath = this.tryResolveReadableFilePath(previewPath);
+    if (currentPreviewPath) {
+      return currentPreviewPath;
+    }
+
+    if (!sourcePath) {
+      return '';
+    }
+
+    try {
+      createPreviewPlaceholderSync(sourcePath, previewPath);
+      const readablePreviewPath = this.tryResolveReadableFilePath(previewPath);
+      if (readablePreviewPath) {
+        this.logger.info('image-preview-restored', {
+          imageId: Number(image?.id || 0),
+          previewPath: readablePreviewPath,
+        });
+      }
+      return readablePreviewPath;
+    } catch (error) {
+      this.logger.error('image-preview-restore-failed', {
+        imageId: Number(image?.id || 0),
+        previewPath,
+        sourcePath,
+        error: String(error?.message || error),
+      });
+      return '';
+    }
+  }
+
   resolveReadableImageRecord(imageOrId, options = {}) {
     const {
       ensureThumbnail = false,
+      ensurePreview = false,
       throwIfMissing = true,
     } = options;
     const image = typeof imageOrId === 'object' && imageOrId
@@ -957,12 +1018,16 @@ export class InspiraDBApp {
     const thumbnailPath = ensureThumbnail
       ? this.ensureThumbnailForImage(image, readableImagePath) || readableImagePath
       : this.tryResolveReadableFilePath(image.thumbnail_path) || image.thumbnail_path;
+    const previewPath = ensurePreview
+      ? this.ensurePreviewForImage(image, readableImagePath)
+      : this.tryResolveReadableFilePath(this.buildPreviewPathForImage(image));
 
     return {
       ...image,
       library_path: readableImagePath,
       source_path: sourcePath || image.source_path,
       thumbnail_path: thumbnailPath,
+      preview_path: previewPath || '',
     };
   }
 
@@ -2339,6 +2404,7 @@ export class InspiraDBApp {
 
     const libraryPath = buildLibraryPath(this.paths.libraryRootPath, md5Hash, fileName);
     const thumbnailPath = buildThumbnailPath(this.paths.thumbnailRootPath, md5Hash, ext);
+    const previewPath = ext === '.heic' ? buildPreviewPath(this.paths.previewRootPath, md5Hash) : '';
     const now = nowIso();
     let importedXmpMetadata = null;
 
@@ -2367,6 +2433,18 @@ export class InspiraDBApp {
 
       this.logger.info('importFile-creating-thumbnail', { libraryPath, thumbnailPath });
       await createThumbnailPlaceholder(libraryPath, thumbnailPath);
+      if (previewPath) {
+        try {
+          this.logger.info('importFile-creating-preview', { libraryPath, previewPath });
+          await createPreviewPlaceholder(libraryPath, previewPath);
+        } catch (error) {
+          this.logger.error('importFile-preview-generation-failed', {
+            libraryPath,
+            previewPath,
+            error: String(error?.message || error),
+          });
+        }
+      }
       this.db.transaction(() => {
         const result = this.db.run(
           `INSERT INTO images (
@@ -2463,6 +2541,7 @@ export class InspiraDBApp {
     } catch (error) {
       removeFileIfExists(libraryPath);
       removeFileIfExists(thumbnailPath);
+      removeFileIfExists(previewPath);
       this.logger.error('import-file-failed', {
         filePath: resolved.filePath,
         error: String(error?.message || error),
@@ -2840,6 +2919,7 @@ export class InspiraDBApp {
   getImageDetail(imageId) {
     const image = this.resolveReadableImageRecord(imageId, {
       ensureThumbnail: true,
+      ensurePreview: true,
       throwIfMissing: true,
     });
 
@@ -3303,6 +3383,7 @@ export class InspiraDBApp {
 
     removeFileIfExists(image.library_path);
     removeFileIfExists(image.thumbnail_path);
+    removeFileIfExists(this.buildPreviewPathForImage(image));
     removeFileIfExists(buildXmpSidecarPathForImage(image.library_path));
 
     return {

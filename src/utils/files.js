@@ -3,6 +3,11 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { SUPPORTED_EXTENSIONS } from '../core/config.js';
 
+export const HEIC_THUMBNAIL_MAX_DIMENSION = 400;
+export const HEIC_THUMBNAIL_QUALITY = 80;
+export const HEIC_PREVIEW_MAX_DIMENSION = 2048;
+export const HEIC_PREVIEW_QUALITY = 85;
+
 export function ensureDirectories(paths) {
   for (const dirPath of paths) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -59,6 +64,49 @@ export function buildThumbnailPath(thumbnailRootPath, md5Hash, ext = '.thumb') {
   return path.join(thumbnailRootPath, prefix, `${md5Hash}${thumbnailExt}`);
 }
 
+export function buildPreviewPath(previewRootPath, md5Hash) {
+  const prefix = md5Hash.slice(0, 2);
+  return path.join(previewRootPath, prefix, `${md5Hash}.jpg`);
+}
+
+export function buildHeicJpegConversionArgs(sourcePath, targetPath, options = {}) {
+  const quality = String(options.quality ?? HEIC_PREVIEW_QUALITY);
+  const maxDimension = String(options.maxDimension ?? HEIC_PREVIEW_MAX_DIMENSION);
+  return ['-s', 'format', 'jpeg', '-s', 'formatOptions', quality, '-Z', maxDimension, sourcePath, '--out', targetPath];
+}
+
+function createHeicDerivedJpeg(sourcePath, targetPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${options.label || 'HEIC conversion'} timeout`));
+    }, Number(options.timeoutMs || 10000));
+
+    const proc = spawn('sips', buildHeicJpegConversionArgs(sourcePath, targetPath, options));
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`sips exited with code ${code}`));
+      }
+    });
+
+    proc.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+function createHeicDerivedJpegSync(sourcePath, targetPath, options = {}) {
+  return spawnSync(
+    'sips',
+    buildHeicJpegConversionArgs(sourcePath, targetPath, options),
+    { encoding: 'utf8' },
+  );
+}
+
 export async function createThumbnailPlaceholder(sourcePath, thumbnailPath) {
   const ext = path.extname(sourcePath).toLowerCase();
 
@@ -68,26 +116,10 @@ export async function createThumbnailPlaceholder(sourcePath, thumbnailPath) {
   // HEIC 格式需要转换为 JPEG 才能被浏览器显示
   if (ext === '.heic') {
     try {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Thumbnail conversion timeout'));
-        }, 10000);
-
-        const proc = spawn('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '80', '-Z', '400', sourcePath, '--out', thumbnailPath]);
-
-        proc.on('close', (code) => {
-          clearTimeout(timeout);
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`sips exited with code ${code}`));
-          }
-        });
-
-        proc.on('error', (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
+      await createHeicDerivedJpeg(sourcePath, thumbnailPath, {
+        quality: HEIC_THUMBNAIL_QUALITY,
+        maxDimension: HEIC_THUMBNAIL_MAX_DIMENSION,
+        label: 'Thumbnail conversion',
       });
       return;
     } catch (error) {
@@ -106,11 +138,10 @@ export function createThumbnailPlaceholderSync(sourcePath, thumbnailPath) {
   fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
 
   if (ext === '.heic') {
-    const result = spawnSync(
-      'sips',
-      ['-s', 'format', 'jpeg', '-s', 'formatOptions', '80', '-Z', '400', sourcePath, '--out', thumbnailPath],
-      { encoding: 'utf8' },
-    );
+    const result = createHeicDerivedJpegSync(sourcePath, thumbnailPath, {
+      quality: HEIC_THUMBNAIL_QUALITY,
+      maxDimension: HEIC_THUMBNAIL_MAX_DIMENSION,
+    });
 
     if (result.status === 0) {
       return;
@@ -120,4 +151,45 @@ export function createThumbnailPlaceholderSync(sourcePath, thumbnailPath) {
   }
 
   copyFile(sourcePath, thumbnailPath);
+}
+
+export async function createPreviewPlaceholder(sourcePath, previewPath) {
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (ext !== '.heic') {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(previewPath), { recursive: true });
+
+  try {
+    await createHeicDerivedJpeg(sourcePath, previewPath, {
+      quality: HEIC_PREVIEW_QUALITY,
+      maxDimension: HEIC_PREVIEW_MAX_DIMENSION,
+      label: 'Preview conversion',
+    });
+  } catch (error) {
+    removeFileIfExists(previewPath);
+    throw error;
+  }
+}
+
+export function createPreviewPlaceholderSync(sourcePath, previewPath) {
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (ext !== '.heic') {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(previewPath), { recursive: true });
+
+  const result = createHeicDerivedJpegSync(sourcePath, previewPath, {
+    quality: HEIC_PREVIEW_QUALITY,
+    maxDimension: HEIC_PREVIEW_MAX_DIMENSION,
+  });
+
+  if (result.status === 0) {
+    return;
+  }
+
+  removeFileIfExists(previewPath);
+  throw new Error(result.stderr || result.stdout || `exit ${result.status}`);
 }

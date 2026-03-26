@@ -273,7 +273,7 @@ CREATE TABLE app_settings (
 | `getImageDetail(imageId)` | 获取图片完整详情 |
 | `updateImageCaption(imageId, content)` | 更新图片描述 |
 | `updateImageTags(imageId, tagNames)` | 更新图片标签 |
-| `exportImage(imageId, targetPath)` | 导出图片到指定路径 |
+| `exportImage(imageId, targetPath)` | 导出图片到指定路径；仅 JPG/JPEG 导出会写回图片元数据 |
 | `copyImageToClipboard(imageId)` | 复制图片到系统剪贴板 |
 | `deleteImage(imageId)` | 删除图片及相关数据 |
 | `rebuildAnalysis(imageId)` | 重新触发 AI 分析 |
@@ -733,7 +733,7 @@ littlePin_Mac/
 │       ├── logger.js        # 日志
 │       ├── text.js          # 文本处理
 │       ├── vector.js        # 向量计算
-│       └── xmp.js           # XMP 元数据
+│       └── xmp.js           # XMP 元数据（仅 JPG/JPEG 内嵌写回；其它格式不生成 sidecar）
 ├── test/                     # 测试文件
 ├── package.json              # 项目配置
 ├── vite.config.js            # Vite 配置

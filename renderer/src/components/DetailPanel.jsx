@@ -12,6 +12,7 @@ import {
   Save,
   Trash2,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 import { Badge } from './ui/badge.jsx';
@@ -75,6 +76,7 @@ export function DetailPanel({
   onExport,
   onReanalyze,
   onDelete,
+  onOpenImagePreview,
 }) {
   const { t } = useTranslation();
   const [isEditing, setIsEditing] = React.useState(false);
@@ -268,17 +270,35 @@ export function DetailPanel({
 
     await onDelete?.();
   };
+
+  const handleOpenImagePreview = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenImagePreview?.(image);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto">
         <div className="space-y-6 px-6 py-6">
-          <div className="overflow-hidden rounded-2xl border border-clay/10 bg-white shadow-sm">
+          <div className="group relative overflow-hidden rounded-2xl border border-clay/10 bg-white shadow-sm">
             {image.thumbnail_data_url ? (
-              <img
-                src={image.thumbnail_data_url}
-                alt={image.original_file_name}
-                className="w-full object-cover"
-              />
+              <>
+                <img
+                  src={image.thumbnail_data_url}
+                  alt={image.original_file_name}
+                  className="w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={handleOpenImagePreview}
+                  className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-ink/70 shadow-sm opacity-0 transition-all duration-200 hover:bg-white hover:text-ink group-hover:opacity-100"
+                  aria-label={t('detailPanel.openImagePreview')}
+                  title={t('detailPanel.openImagePreview')}
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </button>
+              </>
             ) : (
               <div className="flex aspect-[4/3] items-center justify-center text-sm text-ink/30">
                 {t('detailPanel.noPreview')}

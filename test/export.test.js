@@ -5,6 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { InspiraDBApp } from '../src/index.js';
+import {
+  buildXmpSidecarPathForImage,
+  readXmpMetadataForImage,
+} from '../src/utils/xmp.js';
 
 function createTestApp() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inspiradb-export-test-'));
@@ -90,7 +94,43 @@ function insertExportableImage(app, {
   return Number(result.lastInsertRowid);
 }
 
-test('exportImage copies the file to the explicit destination path and writes metadata when possible', () => {
+function createMinimalJpegBuffer() {
+  return Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+}
+
+function stubEmbeddingRefresh(app) {
+  app.refreshEmbeddingWithFallback = async () => ({
+    embeddingStatus: 'refreshed',
+    analysisStatus: 'ready',
+  });
+}
+
+test('exportImage writes metadata into exported jpeg files when possible', () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    const imageId = insertExportableImage(app, {
+      fileName: 'poster.jpg',
+      content: createMinimalJpegBuffer(),
+    });
+    const destinationPath = path.join(rootDir, 'exports', 'poster-copy.jpg');
+    const result = app.exportImage(imageId, destinationPath);
+    const metadata = readXmpMetadataForImage(destinationPath);
+
+    assert.equal(result.canceled, false);
+    assert.equal(result.filePath, destinationPath);
+    assert.deepEqual(result.warnings, []);
+    assert.equal(fs.existsSync(result.filePath), true);
+    assert.equal(result.sidecarPath, '');
+    assert.equal(result.writeMode, 'embedded');
+    assert.equal(result.embedded, true);
+    assert.equal(metadata.source, 'embedded');
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('exportImage skips metadata write-back for non-jpeg exports without warnings', () => {
   const { app, rootDir } = createTestApp();
 
   try {
@@ -102,8 +142,28 @@ test('exportImage copies the file to the explicit destination path and writes me
     assert.equal(result.filePath, destinationPath);
     assert.deepEqual(result.warnings, []);
     assert.equal(fs.existsSync(result.filePath), true);
-    assert.equal(fs.existsSync(result.sidecarPath), true);
-    assert.equal(result.writeMode, 'sidecar');
+    assert.equal(result.sidecarPath, '');
+    assert.equal(result.writeMode, 'skipped');
+    assert.equal(result.embedded, false);
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('exportImage removes an existing sidecar next to a non-jpeg export target', () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    const imageId = insertExportableImage(app, { fileName: 'poster.png' });
+    const destinationPath = path.join(rootDir, 'exports', 'poster-copy.png');
+    const sidecarPath = buildXmpSidecarPathForImage(destinationPath);
+    fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
+    fs.writeFileSync(sidecarPath, '<x:xmpmeta>stale</x:xmpmeta>');
+
+    const result = app.exportImage(imageId, destinationPath);
+
+    assert.equal(result.writeMode, 'skipped');
+    assert.equal(fs.existsSync(sidecarPath), false);
   } finally {
     disposeTestApp(app, rootDir);
   }
@@ -195,7 +255,10 @@ test('exportImage keeps the exported file when metadata write-back fails', () =>
   const { app, rootDir } = createTestApp();
 
   try {
-    const imageId = insertExportableImage(app, { fileName: 'warn.png' });
+    const imageId = insertExportableImage(app, {
+      fileName: 'warn.jpg',
+      content: createMinimalJpegBuffer(),
+    });
     app.writeExportMetadata = () => {
       throw new Error('xmp-failed');
     };
@@ -235,7 +298,10 @@ test('exportImages returns mixed failures and metadata warnings without reducing
 
   try {
     const successImageId = insertExportableImage(app, { fileName: 'good.png' });
-    const warningImageId = insertExportableImage(app, { fileName: 'warn-batch.png' });
+    const warningImageId = insertExportableImage(app, {
+      fileName: 'warn-batch.jpg',
+      content: createMinimalJpegBuffer(),
+    });
     const missingImageId = insertExportableImage(app, {
       fileName: 'missing-batch.png',
       createSource: false,
@@ -261,6 +327,46 @@ test('exportImages returns mixed failures and metadata warnings without reducing
     assert.equal(result.failed[0].code, 'IMAGE_FILE_MISSING');
     assert.equal(warnedExport.warnings.length, 1);
     assert.equal(fs.existsSync(warnedExport.filePath), true);
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('updateImageCaption removes any existing non-jpeg library sidecar and reports skipped write-back', async () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    stubEmbeddingRefresh(app);
+    const imageId = insertExportableImage(app, { fileName: 'library.png' });
+    const image = app.db.get('SELECT library_path FROM images WHERE id = :imageId', { imageId });
+    const sidecarPath = buildXmpSidecarPathForImage(image.library_path);
+    fs.writeFileSync(sidecarPath, '<x:xmpmeta>stale</x:xmpmeta>');
+
+    const result = await app.updateImageCaption(imageId, 'updated caption');
+
+    assert.equal(result.imageId, imageId);
+    assert.equal(result.xmpSidecarPath, '');
+    assert.equal(fs.existsSync(sidecarPath), false);
+  } finally {
+    disposeTestApp(app, rootDir);
+  }
+});
+
+test('updateImageTags removes any existing non-jpeg library sidecar and reports skipped write-back', async () => {
+  const { app, rootDir } = createTestApp();
+
+  try {
+    stubEmbeddingRefresh(app);
+    const imageId = insertExportableImage(app, { fileName: 'library.webp' });
+    const image = app.db.get('SELECT library_path FROM images WHERE id = :imageId', { imageId });
+    const sidecarPath = buildXmpSidecarPathForImage(image.library_path);
+    fs.writeFileSync(sidecarPath, '<x:xmpmeta>stale</x:xmpmeta>');
+
+    const result = await app.updateImageTags(imageId, []);
+
+    assert.equal(result.imageId, imageId);
+    assert.equal(result.xmpSidecarPath, '');
+    assert.equal(fs.existsSync(sidecarPath), false);
   } finally {
     disposeTestApp(app, rootDir);
   }

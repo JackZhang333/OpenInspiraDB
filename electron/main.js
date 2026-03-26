@@ -12,6 +12,7 @@ import {
   withSecurityScopedAccess,
   withSecurityScopedDialogOptions,
 } from './security-scoped.js';
+import { fileToDataUrl, fileToPreviewDataUrl } from './image-data-url.js';
 import { createSingleImageExportHandler } from './export-image.js';
 import { createFolderImportHandler } from './import-folder.js';
 import { resolveCompatibleUserDataPath } from './user-data-path.js';
@@ -72,28 +73,6 @@ function emitImportProgress(payload = {}) {
   mainWindow.webContents.send('inspiradb:import-progress', payload);
 }
 
-function toMimeType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.png') return 'image/png';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.heic') return 'image/heic';
-  if (ext === '.gif') return 'image/gif';
-  if (ext === '.bmp') return 'image/bmp';
-  if (ext === '.thumb') return 'image/jpeg'; // 缩略图默认是 JPEG
-  return 'application/octet-stream';
-}
-
-function fileToDataUrl(filePath) {
-  if (!filePath || !fs.existsSync(filePath)) {
-    return null;
-  }
-
-  const mimeType = toMimeType(filePath);
-  const base64 = fs.readFileSync(filePath).toString('base64');
-  return `data:${mimeType};base64,${base64}`;
-}
-
 function readClipboardImage(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
     throw createAppError('IMAGE_FILE_MISSING');
@@ -118,11 +97,16 @@ function decorateSearchItems(result) {
 }
 
 function decorateImageDetail(detail) {
+  const originalExt = path.extname(String(detail?.image?.original_file_name || detail?.image?.library_path || '')).toLowerCase();
+  const previewSourcePath = originalExt === '.heic'
+    ? (detail.image.preview_path || detail.image.thumbnail_path)
+    : detail.image.library_path;
+
   return {
     ...detail,
     image: {
       ...detail.image,
-      preview_data_url: fileToDataUrl(detail.image.library_path),
+      preview_data_url: fileToPreviewDataUrl(previewSourcePath),
       thumbnail_data_url: fileToDataUrl(detail.image.thumbnail_path),
     },
   };
@@ -165,6 +149,7 @@ function createInspiraApp() {
     dbPath: path.join(userDataPath, 'inspiradb.sqlite'),
     libraryRootPath: path.join(userDataPath, 'library'),
     thumbnailRootPath: path.join(userDataPath, 'thumbnails'),
+    previewRootPath: path.join(userDataPath, 'previews'),
     autoStartQueue: true,
   });
 }

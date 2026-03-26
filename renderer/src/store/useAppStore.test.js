@@ -269,6 +269,26 @@ test('single image export counts warnings from the result payload and shows a wa
   assert.ok(harness.store.getState().toast.message.length > 0);
 });
 
+test('single image export treats skipped metadata write-back as a normal success', async () => {
+  const harness = await createStoreHarness({
+    onExportImage: async (imageId) => ({
+      canceled: false,
+      imageId,
+      filePath: `/tmp/export-${imageId}.png`,
+      writeMode: 'skipped',
+      warnings: [],
+    }),
+  });
+
+  const result = await harness.store.getState().exportImage(42);
+
+  assert.equal(result.canceled, false);
+  assert.equal(harness.store.getState().saving, false);
+  assert.equal(harness.store.getState().toast?.type, 'success');
+  assert.equal(typeof harness.store.getState().toast?.message, 'string');
+  assert.ok(harness.store.getState().toast.message.length > 0);
+});
+
 test('batch export can derive warning count from exported items when summary count is absent', async () => {
   const harness = await createStoreHarness({
     initialItems: [{ id: 7 }, { id: 8 }],

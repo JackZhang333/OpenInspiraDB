@@ -52,7 +52,7 @@ Then open the generated app from the `release/` directory and verify:
 - cloud analysis requests
 - single-image export from the detail panel
 - batch export from the sidebar
-- export overwrite flow and metadata sidecar write
+- export overwrite flow and JPEG-only metadata write-back
 - window icon and bundle metadata
 
 For App Review regressions, validate both:

@@ -33,5 +33,6 @@ export function defaultPaths(rootDir) {
     dbPath: path.join(rootDir, 'data', 'inspiradb.sqlite'),
     libraryRootPath: path.join(rootDir, 'data', 'library'),
     thumbnailRootPath: path.join(rootDir, 'data', 'thumbnails'),
+    previewRootPath: path.join(rootDir, 'data', 'previews'),
   };
 }

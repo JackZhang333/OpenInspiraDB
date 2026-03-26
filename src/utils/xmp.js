@@ -278,6 +278,12 @@ export function buildXmpSidecarPathForImage(imagePath) {
   return path.join(parsed.dir, `${parsed.name}.xmp`);
 }
 
+function removeXmpSidecarIfExists(sidecarPath) {
+  if (fs.existsSync(sidecarPath)) {
+    fs.rmSync(sidecarPath, { force: true });
+  }
+}
+
 export function readXmpMetadataForImage(imagePath) {
   const resolvedImagePath = path.resolve(String(imagePath || ''));
   const sidecarPath = buildXmpSidecarPathForImage(resolvedImagePath);
@@ -326,6 +332,16 @@ export function writeXmpForImage(imagePath, metadata = {}) {
   const caption = String(metadata.caption || '').trim();
   const tags = uniqueNonEmpty(metadata.tags || []);
   const sidecarPath = buildXmpSidecarPathForImage(resolvedPath);
+  const ext = path.extname(resolvedPath).toLowerCase();
+
+  if (ext !== '.jpg' && ext !== '.jpeg') {
+    removeXmpSidecarIfExists(sidecarPath);
+    return {
+      embedded: false,
+      mode: 'skipped',
+      sidecarPath: '',
+    };
+  }
 
   const captionXml = escapeXml(caption);
   const tagsXml = tags
@@ -351,29 +367,12 @@ ${tagsXml}
   </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>`;
-
-  const ext = path.extname(resolvedPath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') {
-    try {
-      embedXmpIntoJpegFile(resolvedPath, packet);
-      if (fs.existsSync(sidecarPath)) {
-        fs.rmSync(sidecarPath, { force: true });
-      }
-      return {
-        embedded: true,
-        mode: 'embedded',
-        sidecarPath: '',
-      };
-    } catch {
-      // Fallback to sidecar.
-    }
-  }
-
-  fs.writeFileSync(sidecarPath, packet, 'utf8');
+  embedXmpIntoJpegFile(resolvedPath, packet);
+  removeXmpSidecarIfExists(sidecarPath);
 
   return {
-    embedded: false,
-    mode: 'sidecar',
-    sidecarPath,
+    embedded: true,
+    mode: 'embedded',
+    sidecarPath: '',
   };
 }

@@ -60,6 +60,7 @@ export default function App() {
   const [queryDraft, setQueryDraft] = useState(query);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tagSettingsOpen, setTagSettingsOpen] = useState(false);
+  const [fullscreenPreviewImage, setFullscreenPreviewImage] = useState(null);
 
   // 网络状态检测
   const [isOnline, setIsOnline] = useState(true);
@@ -110,6 +111,25 @@ export default function App() {
     setQueryDraft(query);
   }, [query]);
 
+  useEffect(() => {
+    setFullscreenPreviewImage(null);
+  }, [selectedImageId]);
+
+  useEffect(() => {
+    if (!fullscreenPreviewImage) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setFullscreenPreviewImage(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullscreenPreviewImage]);
+
   const detailDrawerOpen = Boolean(selectedImageId);
   const shellGridClass = useMemo(() => (
     sidebarCollapsed ? 'grid-cols-[72px_minmax(0,1fr)]' : 'grid-cols-[320px_minmax(0,1fr)]'
@@ -145,6 +165,14 @@ export default function App() {
     if (!loading) {
       loadMore();
     }
+  };
+
+  const handleOpenImagePreview = (image) => {
+    if (!image?.preview_data_url && !image?.thumbnail_data_url) {
+      return;
+    }
+
+    setFullscreenPreviewImage(image);
   };
 
   const hasMore = result.items.length < result.total;
@@ -291,12 +319,34 @@ export default function App() {
                   onExport={exportImage}
                   onReanalyze={rebuildAnalysis}
                   onDelete={deleteSelected}
+                  onOpenImagePreview={handleOpenImagePreview}
                 />
               </div>
             </div>
           </div>
         </aside>
       </div>
+
+      {fullscreenPreviewImage ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/78 p-6 backdrop-blur-sm"
+          onClick={() => setFullscreenPreviewImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('detailPanel.imagePreviewDialog')}
+        >
+          <div className="flex max-h-full max-w-full flex-col items-center gap-3">
+            <img
+              src={fullscreenPreviewImage.preview_data_url || fullscreenPreviewImage.thumbnail_data_url}
+              alt={fullscreenPreviewImage.original_file_name}
+              className="max-h-[calc(100vh-88px)] max-w-[calc(100vw-48px)] cursor-zoom-out rounded-2xl object-contain shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            />
+            <div className="rounded-full bg-black/40 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur-sm">
+              {t('detailPanel.clickToClosePreview')}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <TagSettingsDialog
         open={tagSettingsOpen}
