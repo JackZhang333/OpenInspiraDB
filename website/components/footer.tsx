@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useI18n } from "@/components/i18n-provider";
 export function Footer() {
   const { t, locale } = useI18n();
@@ -13,9 +14,17 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand */}
           <div className="md:col-span-2">
-            <Link href={getHref("/")} className="flex items-center gap-2 font-bold text-xl mb-4">
-              <span className="text-primary">Inspira</span>
-              <span className="text-muted-foreground">DB</span>
+            <Link href={getHref("/")} className="flex items-center gap-3 mb-4">
+              <Image
+                src="/Logo.svg"
+                alt="InspiraDB"
+                width={32}
+                height={32}
+                className="h-8 w-auto"
+              />
+              <span className="font-bold text-xl">
+                {locale === "zh" ? "意图集" : "InspiraDB"}
+              </span>
             </Link>
             <p className="text-sm text-muted-foreground max-w-sm">
               {t("footer.tagline") as string}
