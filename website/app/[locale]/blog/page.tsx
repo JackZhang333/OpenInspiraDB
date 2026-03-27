@@ -119,7 +119,7 @@ export default async function BlogPage({ params }: BlogPageProps) {
           <div className="container">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {blogPosts.map((post) => (
-                <Link key={post.slug} href={`/blog/${post.slug}/`}>
+                <Link key={post.slug} href={`/${locale}/blog/${post.slug}/`}>
                   <Card className="h-full hover:shadow-lg transition-shadow">
                     <CardHeader>
                       <Badge variant="secondary" className="w-fit mb-3">

@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import { useI18n } from "@/components/i18n-provider";
-import { defaultLocale } from "@/i18n/config";
-
 export function Footer() {
   const { t, locale } = useI18n();
-  const isDefaultLocale = locale === defaultLocale;
 
-  const getHref = (path: string) => isDefaultLocale ? path : `/${locale}${path}`;
+  const getHref = (path: string) => `/${locale}${path}`;
 
   return (
     <footer className="border-t bg-muted/30">

@@ -4,13 +4,11 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { useI18n } from "@/components/i18n-provider";
-import { defaultLocale } from "@/i18n/config";
 
 export function CTASection() {
   const { t, locale } = useI18n();
-  const isDefaultLocale = locale === defaultLocale;
 
-  const getHref = (path: string) => isDefaultLocale ? path : `/${locale}${path}`;
+  const getHref = (path: string) => `/${locale}${path}`;
 
   return (
     <section className="py-24">

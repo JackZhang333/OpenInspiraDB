@@ -160,15 +160,29 @@ export default async function PricingPage({ params }: PricingPageProps) {
                         </li>
                       ))}
                     </ul>
-                    <Button
-                      variant={plan.popular ? "default" : "outline"}
-                      className="w-full"
-                      asChild
-                    >
-                      <Link href="/download">
+                    {plan.key === "pro" ? (
+                      <Button
+                        variant="default"
+                        className="w-full"
+                        asChild
+                      >
+                        <Link
+                          href="https://apps.apple.com/us/app/inspiradb/id6760753067?mt=12"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {isZh ? plan.cta.zh : plan.cta.en}
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        disabled
+                      >
                         {isZh ? plan.cta.zh : plan.cta.en}
-                      </Link>
-                    </Button>
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               ))}

@@ -4,6 +4,7 @@ import { I18nProvider } from "@/components/i18n-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import Image from "next/image";
 import { Palette, Camera, Video, Quote, CheckCircle } from "lucide-react";
 import { locales, type Locale, defaultLocale } from "@/i18n/config";
 
@@ -16,6 +17,7 @@ export function generateStaticParams() {
 const useCases = [
   {
     icon: Palette,
+    image: "/scene1.jpg",
     title: "UI/UX Designers",
     titleZh: "UI/UX设计师",
     subtitle: "From folder chaos to organized bliss",
@@ -33,6 +35,7 @@ const useCases = [
   },
   {
     icon: Camera,
+    image: "/scene2.jpg",
     title: "Photographers",
     titleZh: "摄影师",
     subtitle: "500,000 photos, instantly searchable",
@@ -50,6 +53,7 @@ const useCases = [
   },
   {
     icon: Video,
+    image: "/scene3.jpg",
     title: "Content Creators",
     titleZh: "内容创作者",
     subtitle: "Never lose a thumbnail idea again",
@@ -142,11 +146,14 @@ export default async function UseCasesPage({ params }: UseCasesPageProps) {
 
                 {/* Visual */}
                 <div className={index % 2 === 1 ? "lg:order-1" : ""}>
-                  <div className="aspect-square rounded-2xl bg-muted flex items-center justify-center">
-                    <div className="text-center text-muted-foreground">
-                      <useCase.icon className="h-24 w-24 mx-auto mb-4 opacity-20" />
-                      <p className="text-sm">{isZh ? "应用场景截图" : "Use case screenshot"}</p>
-                    </div>
+                  <div className="aspect-square rounded-2xl overflow-hidden">
+                    <Image
+                      src={useCase.image}
+                      alt={isZh ? useCase.titleZh : useCase.title}
+                      width={600}
+                      height={600}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
               </div>

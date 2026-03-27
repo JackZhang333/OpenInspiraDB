@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Menu, X, Globe } from "lucide-react";
 import { locales } from "@/i18n/config";
@@ -27,9 +28,18 @@ export function Navigation() {
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-16 items-center justify-between">
         {/* Logo */}
-        <Link href={getHref("/")} className="flex items-center gap-2 font-bold text-xl">
-          <span className="text-primary">Inspira</span>
-          <span className="text-muted-foreground">DB</span>
+        <Link href={getHref("/")} className="flex items-center gap-3">
+          <Image
+            src="/Logo.svg"
+            alt="InspiraDB"
+            width={32}
+            height={32}
+            className="h-8 w-auto"
+            priority
+          />
+          <span className="font-bold text-xl">
+            {locale === "zh" ? "意图集" : "InspiraDB"}
+          </span>
         </Link>
 
         {/* Desktop Navigation */}

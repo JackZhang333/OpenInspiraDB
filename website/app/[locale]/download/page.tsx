@@ -65,7 +65,11 @@ export default async function DownloadPage({ params }: DownloadPageProps) {
                     {isZh ? "适用于Intel处理器的Mac" : "For Macs with Intel processors"}
                   </p>
                   <Button size="lg" className="w-full" asChild>
-                    <a href="#" download>
+                    <a
+                      href="https://apps.apple.com/us/app/inspiradb/id6760753067?mt=12"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       {isZh ? "下载 Intel 版本" : "Download for Intel"}
                     </a>
@@ -88,7 +92,11 @@ export default async function DownloadPage({ params }: DownloadPageProps) {
                     {isZh ? "适用于 M1/M2/M3 Mac" : "For M1/M2/M3 Macs"}
                   </p>
                   <Button size="lg" className="w-full" asChild>
-                    <a href="#" download>
+                    <a
+                      href="https://apps.apple.com/us/app/inspiradb/id6760753067?mt=12"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       {isZh ? "下载 Apple Silicon 版本" : "Download for Apple Silicon"}
                     </a>

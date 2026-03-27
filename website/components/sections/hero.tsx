@@ -1,17 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Brain, Search, Shield, Zap } from "lucide-react";
 import { useI18n } from "@/components/i18n-provider";
-import { defaultLocale } from "@/i18n/config";
 
 export function HeroSection() {
   const { t, locale } = useI18n();
-  const isDefaultLocale = locale === defaultLocale;
 
-  const getHref = (path: string) => isDefaultLocale ? path : `/${locale}${path}`;
+  const getHref = (path: string) => `/${locale}${path}`;
 
   return (
     <section className="relative overflow-hidden">
@@ -75,14 +74,15 @@ export function HeroSection() {
         <div className="mt-16 md:mt-20">
           <div className="relative mx-auto max-w-5xl">
             <div className="rounded-xl border bg-card p-2 shadow-2xl">
-              <div className="rounded-lg bg-muted aspect-[16/10] flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-primary/10 flex items-center justify-center">
-                    <Brain className="h-8 w-8 text-primary" />
-                  </div>
-                  <p className="text-sm">App Preview Image</p>
-                  <p className="text-xs mt-1">Replace with actual screenshot</p>
-                </div>
+              <div className="rounded-lg overflow-hidden">
+                <Image
+                  src="/hero.webp"
+                  alt="InspiraDB App Interface"
+                  width={1280}
+                  height={800}
+                  className="w-full h-auto"
+                  priority
+                />
               </div>
             </div>
           </div>
