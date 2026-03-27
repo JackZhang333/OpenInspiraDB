@@ -190,7 +190,8 @@
     "exportImageSuccess": "图片已导出",
     "exportImageSuccessWithWarning": "图片已导出，但元数据写入失败",
     "exportBatchSuccess": "已导出 {{count}} 张图片",
-    "exportBatchSummary": "已导出 {{exportedCount}} 张，失败 {{failedCount}} 张，元数据告警 {{warningCount}} 项"
+    "exportBatchSummary": "已导出 {{exportedCount}} 张，失败 {{failedCount}} 张，元数据告警 {{warningCount}} 项",
+    "deleteImageSuccess": "删除成功"
   },
   "common": {
     "loading": "加载中...",

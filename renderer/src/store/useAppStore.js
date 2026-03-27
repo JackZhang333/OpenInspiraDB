@@ -727,6 +727,7 @@ export const useAppStore = create((set, get) => ({
       set({ selectedImageId: null, detail: null });
       await get().refreshSearch();
       set({ saving: false });
+      get().showToast(i18n.t('feedback.deleteImageSuccess'), 'success');
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
     }

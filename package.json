@@ -6,8 +6,8 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "clean": "rm -rf release dist .vite renderer/.vite .DS_Store",
+    "build": "node scripts/build-renderer.mjs",
+    "clean": "rm -rf release dist .vite .build-quarantine renderer/.vite .DS_Store",
     "electron:dev": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
     "electron:build": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",

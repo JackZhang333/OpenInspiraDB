@@ -102,6 +102,8 @@ npm run dist:mas:ready
 
 It will print the generated `CFBundleVersion`, verify the universal architectures and package signature, and save the final upload path to `release/mas-upload-summary.txt`.
 
+If you ever hit a cleanup error such as `[vite:prepare-out-dir] ENOTEMPTY` for `dist/renderer/assets` or an `EACCES` failure under `release/mas-universal`, it usually means an earlier build left behind elevated-permission files. The build scripts now quarantine those stale output trees into `.build-quarantine/` automatically so the next MAS build can continue without a manual `chown`. Avoid running the packaging commands with `sudo`, because doing so can recreate the problem.
+
 ## App Review checklist
 
 - Provide screenshots for macOS.

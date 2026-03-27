@@ -13,6 +13,7 @@ release/
 # Vite
 .vite/
 renderer/.vite/
+.build-quarantine/
 
 # Logs
 *.log

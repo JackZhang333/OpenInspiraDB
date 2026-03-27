@@ -190,7 +190,8 @@
     "exportImageSuccess": "Image exported",
     "exportImageSuccessWithWarning": "Image exported, but metadata could not be written",
     "exportBatchSuccess": "Exported {{count}} images",
-    "exportBatchSummary": "Exported {{exportedCount}} images, {{failedCount}} failed, {{warningCount}} metadata warnings"
+    "exportBatchSummary": "Exported {{exportedCount}} images, {{failedCount}} failed, {{warningCount}} metadata warnings",
+    "deleteImageSuccess": "Image deleted"
   },
   "common": {
     "loading": "Loading...",

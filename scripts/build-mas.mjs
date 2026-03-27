@@ -3,9 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import pkg from "../package.json" with { type: "json" };
+import { quarantineBuildPathIfBlocked } from "./quarantine-build-path.mjs";
 
 const rootDir = path.resolve(new URL("..", import.meta.url).pathname);
 const releaseDir = path.join(rootDir, "release");
+const quarantineRoot = path.join(rootDir, ".build-quarantine");
 const targetArch = "universal";
 const appPath = path.join(releaseDir, `mas-${targetArch}`, `${pkg.build.productName}.app`);
 const pkgPath = path.join(releaseDir, `${pkg.build.productName}-${pkg.version}-${targetArch}.pkg`);
@@ -50,6 +52,21 @@ async function main() {
   }
 
   await mkdir(releaseDir, { recursive: true });
+  await quarantineBuildPathIfBlocked({
+    rootDir,
+    targetPath: path.join(releaseDir, "mas-universal"),
+    quarantineRoot,
+  });
+  await quarantineBuildPathIfBlocked({
+    rootDir,
+    targetPath: path.join(releaseDir, "mas-universal-x64-temp"),
+    quarantineRoot,
+  });
+  await quarantineBuildPathIfBlocked({
+    rootDir,
+    targetPath: path.join(releaseDir, "mas-universal-arm64-temp"),
+    quarantineRoot,
+  });
   await rm(pkgPath, { force: true });
 
   const builderResult = run("./node_modules/.bin/electron-builder", ["--config", "electron-builder.mas.cjs"]);
