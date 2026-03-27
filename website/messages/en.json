@@ -1,0 +1,141 @@
+{
+  "metadata": {
+    "title": "InspiraDB - AI-Powered Local Image Management for Mac",
+    "description": "Organize 50,000+ images with AI auto-tagging and semantic search. 100% offline, privacy-first. Cloud BigBrain learns, Local SmallBrain responds in milliseconds."
+  },
+  "nav": {
+    "features": "Features",
+    "useCases": "Use Cases",
+    "pricing": "Pricing",
+    "blog": "Blog",
+    "download": "Download",
+    "language": "Language"
+  },
+  "hero": {
+    "badge": "Now Available for macOS",
+    "title": "Your Images,",
+    "titleHighlight": "Understood by AI",
+    "subtitle": "Organize 50,000+ photos with semantic search \u0026 AI auto-tagging. 100% offline. Your data never leaves your Mac.",
+    "ctaPrimary": "Download Free Trial",
+    "ctaSecondary": "See How It Works"
+  },
+  "features": {
+    "title": "Why Designers Choose InspiraDB",
+    "subtitle": "Five powerful capabilities that transform how you manage visual assets",
+    "aiTagging": {
+      "title": "AI Auto-Tagging",
+      "description": "Upload images and watch as AI automatically identifies content, generating precise Chinese tags organized by industry use, composition, and mood."
+    },
+    "semanticSearch": {
+      "title": "Semantic Search",
+      "description": "Search by intention, not keywords. 'Blue tech product hero shot' finds exactly what you mean, not just files with those words."
+    },
+    "offline": {
+      "title": "100% Offline",
+      "description": "No internet required. Lightning-fast response times. Works on airplanes, in remote locations, anywhere you create."
+    },
+    "privacy": {
+      "title": "Privacy First",
+      "description": "Your images stay on your Mac. Indexed database is locally encrypted. Zero data transmission. Complete commercial confidentiality."
+    },
+    "hybrid": {
+      "title": "BigBrain + SmallBrain",
+      "description": "Cloud BigBrain continuously learns and evolves your tag system. Local SmallBrain delivers millisecond vector search. Best of both worlds."
+    }
+  },
+  "howItWorks": {
+    "title": "How It Works",
+    "step1": {
+      "title": "Import",
+      "description": "Drag folders or single images. We support JPG, PNG, WebP, HEIC up to 50MB."
+    },
+    "step2": {
+      "title": "AI Analysis",
+      "description": "Cloud BigBrain analyzes visuals, generates Chinese captions and tags. Local SmallBrain creates vector embeddings."
+    },
+    "step3": {
+      "title": "Search \u0026 Find",
+      "description": "Type what you need in Chinese. Semantic search finds matches in milliseconds. Filter by tags to narrow results."
+    }
+  },
+  "useCases": {
+    "title": "Built for Creative Professionals",
+    "designer": {
+      "title": "UI/UX Designers",
+      "description": "Find that 'minimalist login page from last year' in seconds. Build mood boards without folder hell."
+    },
+    "photographer": {
+      "title": "Photographers",
+      "description": "500,000 photos organized by style, lighting, and subject. Client asks for 'similar to this' — find matches instantly."
+    },
+    "creator": {
+      "title": "Content Creators",
+      "description": "Never lose a thumbnail idea again. Search 'bold typography red background' and get exactly that."
+    }
+  },
+  "pricing": {
+    "title": "Simple Pricing",
+    "subtitle": "Choose what works for you",
+    "free": {
+      "name": "Free",
+      "price": "$0",
+      "period": "forever",
+      "features": [
+        "Up to 1,000 images",
+        "Basic AI tagging",
+        "Local storage only",
+        "Community support"
+      ],
+      "cta": "Get Started"
+    },
+    "pro": {
+      "name": "Pro",
+      "price": "$49",
+      "period": "one-time",
+      "badge": "Most Popular",
+      "features": [
+        "Unlimited images",
+        "Advanced AI tagging",
+        "Semantic search",
+        "Priority support",
+        "Lifetime updates"
+      ],
+      "cta": "Buy Pro"
+    },
+    "team": {
+      "name": "Team",
+      "price": "$199",
+      "period": "one-time",
+      "features": [
+        "Everything in Pro",
+        "5 team members",
+        "Shared libraries",
+        "Admin dashboard",
+        "Custom training"
+      ],
+      "cta": "Contact Sales"
+    }
+  },
+  "download": {
+    "title": "Download InspiraDB",
+    "subtitle": "macOS 13.0 or later required",
+    "macIntel": "Download for Mac (Intel)",
+    "macSilicon": "Download for Mac (Apple Silicon)",
+    "systemRequirements": "System Requirements",
+    "requirements": [
+      "macOS 13.0 (Ventura) or later",
+      "4GB RAM minimum (8GB recommended)",
+      "500MB disk space for app",
+      "Additional space for image library"
+    ]
+  },
+  "footer": {
+    "tagline": "Let every image be found",
+    "copyright": "© 2026 InspiraDB. All rights reserved.",
+    "links": {
+      "product": "Product",
+      "company": "Company",
+      "legal": "Legal"
+    }
+  }
+}
