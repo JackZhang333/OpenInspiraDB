@@ -99,7 +99,8 @@
       "delete": "Delete \"{{currentName}}\"",
       "deleteShort": "Delete",
       "create": "Create"
-    }
+    },
+    "coEvolution": "Co-Evolution"
   },
   "detailPanel": {
     "title": "Details",
@@ -191,7 +192,39 @@
     "exportImageSuccessWithWarning": "Image exported, but metadata could not be written",
     "exportBatchSuccess": "Exported {{count}} images",
     "exportBatchSummary": "Exported {{exportedCount}} images, {{failedCount}} failed, {{warningCount}} metadata warnings",
-    "deleteImageSuccess": "Image deleted"
+    "deleteImageSuccess": "Image deleted",
+    "coEvolutionApplied": "Applied {{count}} suggestions"
+  },
+  "coEvolution": {
+    "title": "Tag Co-Evolution",
+    "description": "Analyze your tag system with OpenClaw AI to get intelligent organization suggestions.",
+    "startAnalysis": "Start Analysis",
+    "analyzing": "Analyzing...",
+    "analyzingDescription": "OpenClaw is analyzing your tag system, please wait",
+    "suggestions": "Organization Suggestions",
+    "stats": "Current: {{parentCount}} parent tags / {{childCount}} child tags (max {{maxParents}} parent tags)",
+    "noSuggestions": "Your tag system is already well-organized",
+    "selectAll": "Select All",
+    "clearSelection": "Clear Selection",
+    "selectedCount": "Selected {{count}} / {{total}} suggestions",
+    "applySelected": "Apply Selected ({{count}})",
+    "rateSuggestions": "Rate these suggestions (optional)",
+    "comments": "Feedback (optional)",
+    "commentsPlaceholder": "Share your feedback to help OpenClaw evolve...",
+    "kind": {
+      "create": "Create",
+      "rename": "Rename",
+      "merge": "Merge",
+      "move": "Move",
+      "delete": "Delete"
+    },
+    "operationDescription": {
+      "create": "Create tag \"{{name}}\"",
+      "rename": "Rename \"{{from}}\" to \"{{to}}\"",
+      "merge": "Merge \"{{from}}\" into \"{{to}}\"",
+      "move": "Move \"{{name}}\" to \"{{to}}\" category",
+      "delete": "Delete tag \"{{name}}\""
+    }
   },
   "common": {
     "loading": "Loading...",

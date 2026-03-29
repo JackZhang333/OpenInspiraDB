@@ -57,6 +57,8 @@ import {
   ensureSecondaryTag,
 } from './tag-store.js';
 import {
+  calculateAllowedNewParentTags,
+  calculateMaxParentTags,
   isValidGeneratedTagName,
   MAX_ORGANIZATION_NEW_CHILD_COUNT,
   MAX_ORGANIZATION_NEW_PARENT_COUNT,
@@ -70,6 +72,14 @@ import { createLogger } from '../utils/logger.js';
 import { modelConfig as defaultModelConfig } from '../model-config.js';
 import { RoutedAiService } from '../services/ai-factory.js';
 import { AnalysisQueue } from '../services/analysis-queue.js';
+import { createOpenClawClient } from '../services/openclaw-client.js';
+import {
+  buildCoEvolutionContext,
+  convertSuggestionsToOperations,
+  buildFeedbackPayload,
+  CoEvolutionStatus,
+  getSessionStorageKey,
+} from './co-evolution.js';
 
 function resolveExistingFilePath(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -554,15 +564,41 @@ export class InspiraDBApp {
       logger: this.logger,
     });
 
+    // 初始化 OpenClaw 客户端（可选）
+    this.openclawClient = createOpenClawClient({
+      endpoint: process.env.OPENCLAW_ENDPOINT,
+    });
+
+    // 协同进化会话状态
+    this.coEvolutionSession = null;
+
     this.reconcileLegacyImageRelations();
 
     if (autoStartQueue) {
       this.queue.start();
     }
+
+    // 启动时尝试重试之前失败的反馈
+    setTimeout(() => {
+      this.retryPendingFeedback().catch(() => {
+        // 忽略错误
+      });
+    }, 30000); // 延迟 30 秒，等待网络稳定
+
+    // 每 5 分钟尝试重试一次
+    this.feedbackRetryInterval = setInterval(() => {
+      this.retryPendingFeedback().catch(() => {
+        // 忽略错误
+      });
+    }, 5 * 60 * 1000);
   }
 
   close() {
     this.queue.stop();
+    if (this.feedbackRetryInterval) {
+      clearInterval(this.feedbackRetryInterval);
+      this.feedbackRetryInterval = null;
+    }
     this.db.close();
   }
 
@@ -1104,7 +1140,14 @@ export class InspiraDBApp {
       return true;
     }
 
-    if (!isValidGeneratedTagName(normalizedParentName) || state.newParentCount >= MAX_ORGANIZATION_NEW_PARENT_COUNT) {
+    // 计算当前一级和二级标签数量
+    const currentParentCount = snapshot.flatTags.filter((t) => t.level === TAG_LEVEL_PARENT).length;
+    const currentChildCount = snapshot.flatTags.filter((t) => t.level === TAG_LEVEL_CHILD).length;
+
+    // 动态计算允许新增的一级标签数量
+    const allowedNewParents = calculateAllowedNewParentTags(currentParentCount, currentChildCount);
+
+    if (!isValidGeneratedTagName(normalizedParentName) || state.newParentCount >= allowedNewParents) {
       return false;
     }
 
@@ -3511,6 +3554,295 @@ export class InspiraDBApp {
     }
 
     return listTagTree(this.db, counter, groupCounter);
+  }
+
+  // ==================== 标签协同进化 (OpenClaw) ====================
+
+  /**
+   * 检查 OpenClaw 服务是否可用
+   * @returns {Promise<Object>}
+   */
+  async checkOpenClawStatus() {
+    try {
+      const available = await this.openclawClient.healthCheck();
+      return {
+        available,
+        endpoint: this.openclawClient.endpoint,
+      };
+    } catch (error) {
+      this.logger.error('openclaw-status-check-failed', { error: error.message });
+      return {
+        available: false,
+        endpoint: this.openclawClient.endpoint,
+        error: error.code || 'UNKNOWN_ERROR',
+      };
+    }
+  }
+
+  /**
+   * 启动标签协同进化会话
+   * @returns {Promise<Object>}
+   */
+  async startCoEvolution() {
+    // 检查是否已有进行中的会话
+    if (this.coEvolutionSession?.status === CoEvolutionStatus.ANALYZING) {
+      throw new Error('已有进行中的协同进化会话');
+    }
+
+    // 检查 OpenClaw 可用性
+    const status = await this.checkOpenClawStatus();
+    if (!status.available) {
+      const error = new Error('OpenClaw 服务不可用');
+      error.code = 'OPENCLAW_UNAVAILABLE';
+      throw error;
+    }
+
+    // 创建会话
+    const sessionId = `coev-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    this.coEvolutionSession = {
+      id: sessionId,
+      status: CoEvolutionStatus.ANALYZING,
+      startedAt: new Date().toISOString(),
+    };
+
+    this.logger.info('co-evolution-started', { sessionId });
+
+    try {
+      // 构建上下文
+      const context = buildCoEvolutionContext(this.db);
+
+      // 调用 OpenClaw 分析
+      const result = await this.openclawClient.analyzeTags({
+        tagTree: context.tagTree,
+        tagUsageStats: context.tagUsageStats,
+        imageTagStats: context.imageTagStats,
+        constraints: {
+          maxNewParentTags: context.stats.allowedNewParents,
+          maxNewChildTags: MAX_ORGANIZATION_NEW_CHILD_COUNT,
+        },
+        sessionId,
+      });
+
+      // 更新会话状态
+      this.coEvolutionSession.status = CoEvolutionStatus.PENDING_CONFIRMATION;
+      this.coEvolutionSession.openClawSessionId = result.sessionId;
+      this.coEvolutionSession.suggestions = result.suggestions;
+      this.coEvolutionSession.context = context;
+
+      // 转换建议为内部操作格式（传入 tagTree 以补充缺失的标签名称）
+      const operations = convertSuggestionsToOperations(result.suggestions, context.tagTree);
+
+      // 使用现有的标签组织快照进行验证
+      const snapshot = this.buildTagOrganizationSnapshot();
+      const sanitizedOperations = this.sanitizeTagOrganizationOperations(
+        operations.map(op => ({ ...op, source: 'openclaw' })),
+        snapshot
+      );
+
+      this.logger.info('co-evolution-analysis-completed', {
+        sessionId,
+        openClawSessionId: result.sessionId,
+        suggestionCount: result.suggestions.length,
+        sanitizedCount: sanitizedOperations.length,
+      });
+
+      return {
+        sessionId,
+        openClawSessionId: result.sessionId,
+        status: this.coEvolutionSession.status,
+        suggestions: result.suggestions,
+        operations: sanitizedOperations,
+        stats: context.stats,
+      };
+    } catch (error) {
+      this.coEvolutionSession.status = CoEvolutionStatus.FAILED;
+      this.coEvolutionSession.error = error.message;
+
+      this.logger.error('co-evolution-analysis-failed', {
+        sessionId,
+        error: error.message,
+        code: error.code,
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * 获取当前协同进化会话状态
+   * @returns {Object|null}
+   */
+  getCoEvolutionSession() {
+    if (!this.coEvolutionSession) {
+      return null;
+    }
+
+    return {
+      ...this.coEvolutionSession,
+      // 不暴露内部上下文数据
+      context: undefined,
+    };
+  }
+
+  /**
+   * 应用协同进化建议
+   * @param {Array} selectedSuggestionIds - 用户选择的建议ID
+   * @param {Object} options
+   * @returns {Promise<Object>}
+   */
+  async applyCoEvolutionSuggestions(selectedSuggestionIds = [], options = {}) {
+    if (!this.coEvolutionSession) {
+      throw new Error('没有活动的协同进化会话');
+    }
+
+    if (this.coEvolutionSession.status !== CoEvolutionStatus.PENDING_CONFIRMATION) {
+      throw new Error('当前会话不在待确认状态');
+    }
+
+    const { userRating, userComments } = options;
+    const { openClawSessionId, suggestions, context } = this.coEvolutionSession;
+
+    // 过滤用户选择的建议
+    const selectedIds = new Set(selectedSuggestionIds);
+    const selectedSuggestions = suggestions.filter(s => selectedIds.has(s.id));
+
+    // 转换为操作（传入 tagTree 以补充缺失的标签名称）
+    const operations = convertSuggestionsToOperations(selectedSuggestions, context.tagTree);
+
+    // 应用操作
+    this.coEvolutionSession.status = CoEvolutionStatus.APPLYING;
+
+    let applyResult;
+    try {
+      // 复用现有的标签组织应用逻辑
+      applyResult = this.applyTagOrganizationPlan(operations);
+
+      this.coEvolutionSession.status = CoEvolutionStatus.COMPLETED;
+      this.coEvolutionSession.completedAt = new Date().toISOString();
+      this.coEvolutionSession.appliedCount = applyResult.appliedCount;
+
+      this.logger.info('co-evolution-applied', {
+        sessionId: this.coEvolutionSession.id,
+        appliedCount: applyResult.appliedCount,
+      });
+    } catch (error) {
+      this.coEvolutionSession.status = CoEvolutionStatus.FAILED;
+      this.coEvolutionSession.error = error.message;
+      throw error;
+    }
+
+    // 发送反馈给 OpenClaw（异步，不阻塞）
+    this.sendCoEvolutionFeedback(openClawSessionId, suggestions, selectedSuggestions, {
+      userRating,
+      userComments,
+    }).catch(error => {
+      this.logger.error('co-evolution-feedback-failed', {
+        sessionId: openClawSessionId,
+        error: error.message,
+      });
+    });
+
+    return {
+      sessionId: this.coEvolutionSession.id,
+      status: this.coEvolutionSession.status,
+      ...applyResult,
+    };
+  }
+
+  /**
+   * 发送协同进化反馈给 OpenClaw
+   * @private
+   */
+  async sendCoEvolutionFeedback(sessionId, allSuggestions, appliedSuggestions, options) {
+    const { queueFeedbackForRetry } = await import('./co-evolution.js');
+
+    const feedback = buildFeedbackPayload(
+      sessionId,
+      allSuggestions,
+      appliedSuggestions,
+      options
+    );
+
+    try {
+      const result = await this.openclawClient.sendFeedback(feedback);
+      this.logger.info('co-evolution-feedback-sent', { sessionId });
+
+      // 尝试发送队列中之前失败的反馈
+      this.retryPendingFeedback().catch(() => {
+        // 忽略重试错误
+      });
+
+      return result;
+    } catch (error) {
+      // 发送失败，加入队列稍后重试
+      this.logger.warn('co-evolution-feedback-failed-queued', {
+        sessionId,
+        error: error.message,
+        code: error.code,
+      });
+
+      await queueFeedbackForRetry(feedback, this.db);
+
+      // 仍然返回成功，因为反馈已持久化
+      return { queued: true, error: error.message };
+    }
+  }
+
+  /**
+   * 重试发送待处理的反馈
+   * @private
+   */
+  async retryPendingFeedback() {
+    const { getPendingFeedbackQueue, removeFeedbackFromQueue, incrementFeedbackRetryCount } = await import('./co-evolution.js');
+
+    const pending = getPendingFeedbackQueue(this.db);
+    if (!pending.length) return;
+
+    // 检查 OpenClaw 是否可用
+    const status = await this.checkOpenClawStatus();
+    if (!status.available) return;
+
+    for (const item of pending) {
+      try {
+        // 最多重试 3 次
+        if (item.retryCount >= 3) {
+          removeFeedbackFromQueue(this.db, item.queueId);
+          continue;
+        }
+
+        await this.openclawClient.sendFeedback(item.payload);
+        removeFeedbackFromQueue(this.db, item.queueId);
+
+        this.logger.info('co-evolution-feedback-retry-success', {
+          sessionId: item.sessionId,
+          queueId: item.queueId,
+        });
+      } catch (error) {
+        incrementFeedbackRetryCount(this.db, item.queueId);
+        this.logger.warn('co-evolution-feedback-retry-failed', {
+          sessionId: item.sessionId,
+          queueId: item.queueId,
+          retryCount: item.retryCount + 1,
+          error: error.message,
+        });
+      }
+    }
+  }
+
+  /**
+   * 取消当前协同进化会话
+   */
+  cancelCoEvolution() {
+    if (!this.coEvolutionSession) {
+      return;
+    }
+
+    this.logger.info('co-evolution-cancelled', {
+      sessionId: this.coEvolutionSession.id,
+      previousStatus: this.coEvolutionSession.status,
+    });
+
+    this.coEvolutionSession = null;
   }
 
 }

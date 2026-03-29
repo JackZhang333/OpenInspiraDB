@@ -87,6 +87,22 @@ contextBridge.exposeInMainWorld('inspira', {
   setSetting(key, value) {
     return ipcRenderer.invoke('inspiradb:set-setting', key, value);
   },
+  // 标签协同进化 (OpenClaw)
+  checkOpenClawStatus() {
+    return ipcRenderer.invoke('inspiradb:check-openclaw-status');
+  },
+  startCoEvolution() {
+    return ipcRenderer.invoke('inspiradb:start-co-evolution');
+  },
+  getCoEvolutionSession() {
+    return ipcRenderer.invoke('inspiradb:get-co-evolution-session');
+  },
+  applyCoEvolutionSuggestions(payload) {
+    return ipcRenderer.invoke('inspiradb:apply-co-evolution-suggestions', payload);
+  },
+  cancelCoEvolution() {
+    return ipcRenderer.invoke('inspiradb:cancel-co-evolution');
+  },
   // 网络状态检测
   getNetworkStatus() {
     return navigator.onLine;

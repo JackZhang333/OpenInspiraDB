@@ -695,30 +695,38 @@ export function listTagTree(db, countByTagId = new Map(), groupCounter = new Map
       continue;
     }
 
-    const parent = parents.get(row.parentId) || {
-      id: row.parentId,
-      name: row.parentName || UNCATEGORIZED_TAG_NAME,
-      parentId: null,
-      parentName: '',
-      level: TAG_LEVEL_PARENT,
-      sortOrder: 0,
-      isSystem: row.parentName === UNCATEGORIZED_TAG_NAME,
-      count: 0,
-      usageCount: 0,
-      children: [],
-    };
+    // 确定父标签的 key 和 id
+    const parentKey = row.parentId ?? -1; // 使用 -1 作为虚拟"未分组"父标签的 key
+    const parentId = row.parentId ?? -1;  // 使用 -1 作为虚拟"未分组"父标签的 id
+
+    let parent = parents.get(parentKey);
+    if (!parent) {
+      parent = {
+        id: parentId,
+        name: row.parentName || UNCATEGORIZED_TAG_NAME,
+        parentId: null,
+        parentName: '',
+        level: TAG_LEVEL_PARENT,
+        sortOrder: 0,
+        isSystem: !row.parentName, // 如果是虚拟创建的，isSystem 为 true
+        count: 0,
+        usageCount: 0,
+        children: [],
+      };
+      parents.set(parentKey, parent);
+    }
 
     const count = Number(countByTagId.get(row.id) || 0);
     const usageCount = Number(usageCountByTagId.get(row.id) || 0);
     parent.children.push({
       ...row,
+      parentId: parentId, // 确保子标签的 parentId 指向正确的父标签
       count,
       usageCount,
     });
     // 累加子标签数量（用于回退逻辑）
     parent.count += count;
     parent.usageCount += usageCount;
-    parents.set(parent.id, parent);
   }
 
   // 应用分组级别的不重复图片数量（如果提供）

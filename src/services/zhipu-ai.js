@@ -13,6 +13,8 @@ import {
   getAppSetting,
 } from '../core/tag-store.js';
 import {
+  calculateAllowedNewParentTags,
+  calculateMaxParentTags,
   MAX_ORGANIZATION_NEW_CHILD_COUNT,
   MAX_ORGANIZATION_NEW_PARENT_COUNT,
   normalizeOrganizationOperations,
@@ -332,6 +334,14 @@ function buildTagOrganizationContext(db, language = 'zh-CN') {
     return `${group.name}[id:${group.id}]：${childText}`;
   });
 
+  // 计算当前标签统计
+  const parentCount = groups.length;
+  const childCount = groups.reduce((sum, g) => sum + (g.children || []).length, 0);
+
+  // 动态计算标签限制
+  const maxParentTags = calculateMaxParentTags(childCount);
+  const allowedNewParents = calculateAllowedNewParentTags(parentCount, childCount);
+
   const lowUsageTags = groups
     .flatMap((group) => (group.children || [])
       .filter((child) => Number(child.usageCount || 0) <= 5)
@@ -349,32 +359,48 @@ function buildTagOrganizationContext(db, language = 'zh-CN') {
   const evidenceLines = buildTagEvidenceLines(db, lowUsageTags.slice(0, MAX_ORGANIZATION_EVIDENCE_TAGS), language);
 
   if (language === 'en') {
-    return [
-      'Current database tags (format: tagName[id:ID,count:usageCount]):',
-      ...(groupLines.length ? groupLines : ['No tags in database']),
-      '',
-      'Hidden preset word bank (reusable, or create new when inappropriate):',
-      ...presetGroups,
-      '',
-      lowUsageTags.length ? `Low usage tags (<=5 times): ${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join(', ')}` : 'No low usage tags.',
-      '',
-      evidenceLines.length ? 'Low-frequency tag sample evidence (reference for deciding create/merge/delete/move):' : '',
-      ...evidenceLines,
-    ].join('\n');
+    return {
+      text: [
+        'Current database tags (format: tagName[id:ID,count:usageCount]):',
+        ...(groupLines.length ? groupLines : ['No tags in database']),
+        '',
+        'Hidden preset word bank (reusable, or create new when inappropriate):',
+        ...presetGroups,
+        '',
+        lowUsageTags.length ? `Low usage tags (<=5 times): ${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join(', ')}` : 'No low usage tags.',
+        '',
+        evidenceLines.length ? 'Low-frequency tag sample evidence (reference for deciding create/merge/delete/move):' : '',
+        ...evidenceLines,
+      ].join('\n'),
+      stats: {
+        parentCount,
+        childCount,
+        maxParentTags,
+        allowedNewParents,
+      },
+    };
   }
 
-  return [
-    '当前数据库真实标签如下（格式：标签名[id:数字ID,count:使用次数]）：',
-    ...(groupLines.length ? groupLines : ['暂无已落库标签']),
-    '',
-    '隐藏预设词库如下（可复用，也允许在不合适时造新词）：',
-    ...presetGroups,
-    '',
-    lowUsageTags.length ? `低使用标签（<=5次）：${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join('、')}` : '当前没有低使用标签。',
-    '',
-    evidenceLines.length ? '低频标签样例证据（优先参考这些标签决定是否新增/合并/删除/移动）：' : '',
-    ...evidenceLines,
-  ].join('\n');
+  return {
+    text: [
+      '当前数据库真实标签如下（格式：标签名[id:数字ID,count:使用次数]）：',
+      ...(groupLines.length ? groupLines : ['暂无已落库标签']),
+      '',
+      '隐藏预设词库如下（可复用，也允许在不合适时造新词）：',
+      ...presetGroups,
+      '',
+      lowUsageTags.length ? `低使用标签（<=5次）：${lowUsageTags.map(t => `${t.name}[id:${t.id},count:${t.count}]`).join('、')}` : '当前没有低使用标签。',
+      '',
+      evidenceLines.length ? '低频标签样例证据（优先参考这些标签决定是否新增/合并/删除/移动）：' : '',
+      ...evidenceLines,
+    ].join('\n'),
+    stats: {
+      parentCount,
+      childCount,
+      maxParentTags,
+      allowedNewParents,
+    },
+  };
 }
 
 function parseTagOrganizationPayload(rawText) {
@@ -624,10 +650,15 @@ export class ZhipuAiService {
   async previewTagOrganization() {
     const settings = this.getSettings();
     const language = getLanguage(this.db);
-    const context = buildTagOrganizationContext(this.db, language);
+    const { text: contextText, stats } = buildTagOrganizationContext(this.db, language);
     const deleteStrategy = language === 'en'
       ? '[Delete Strategy] Only delete level-2 tags with 0 usage; deleting tags with associated images is prohibited'
       : '【删除策略】仅删除使用次数为0的二级标签；禁止删除有关联图片的标签';
+
+    // 动态生成一级标签限制说明
+    const parentLimitRule = language === 'en'
+      ? `Dynamic parent tag limit: Currently ${stats.childCount} child tags, parent tag limit is ${stats.maxParentTags}. You can create up to ${stats.allowedNewParents} new parent tags.`
+      : `一级标签数量动态限制：当前有 ${stats.childCount} 个二级标签，一级标签上限为 ${stats.maxParentTags} 个，最多可新增 ${stats.allowedNewParents} 个一级标签`;
 
     const systemPrompt = language === 'en'
       ? `You are a tag organization assistant. Output ONLY a JSON object with format {“operations”:[...]}, no reasoning or explanations.
@@ -657,8 +688,9 @@ Organization rules (important):
 8. ${deleteStrategy}
 9. Prioritize reusing existing tags, then preset word bank, only create new when necessary
 10. Unify synonyms directly, don't keep multiple similar tags
-11. Max ${MAX_ORGANIZATION_NEW_PARENT_COUNT} new parent tags, max ${MAX_ORGANIZATION_NEW_CHILD_COUNT} new child tags
-12. Must output JSON directly, no markdown or explanatory text`
+11. ${parentLimitRule}
+12. Max ${MAX_ORGANIZATION_NEW_CHILD_COUNT} new child tags
+13. Must output JSON directly, no markdown or explanatory text`
       : `你是图片标签治理助手。请直接输出 JSON 对象，格式为 {“operations”:[...]}，不要有任何推理过程或解释文字。
 
 可用操作类型：
@@ -686,8 +718,9 @@ Organization rules (important):
 8. ${deleteStrategy}
 9. 优先复用已有标签，其次预设词库，最后才造新词
 10. 近义词直接统一，不保留多个相似标签
-11. 最多新增 ${MAX_ORGANIZATION_NEW_PARENT_COUNT} 个一级标签、${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签
-12. 必须直接输出 JSON，禁止 markdown 或解释性文字`;
+11. ${parentLimitRule}
+12. 最多新增 ${MAX_ORGANIZATION_NEW_CHILD_COUNT} 个二级标签
+13. 必须直接输出 JSON，禁止 markdown 或解释性文字`;
 
     const userPrompt = language === 'en'
       ? `Please provide a “preview first, then execute” organization plan based on the current tag database.
@@ -698,7 +731,7 @@ Organization rules (important):
 3. Don't suggest merging low-frequency tags to equally low-frequency tags
 4. If low-frequency tags can't find semantically similar high-frequency merge targets, suggest move or keep as-is
 
-${context}`
+${contextText}`
       : `请根据当前标签数据库给出一份”先预览、后执行”的整理方案。
 
 【重要判断原则】
@@ -707,7 +740,7 @@ ${context}`
 3. 不要建议将低频标签合并到【同样低频】的标签
 4. 如果低频标签找不到语义相近的高频合并目标，建议 move 或保持现状
 
-${context}`;
+${contextText}`;
 
     const response = await this.request('/chat/completions', {
       model: settings.reasoningModel || settings.visionModel,

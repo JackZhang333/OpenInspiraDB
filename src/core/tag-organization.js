@@ -2,8 +2,50 @@ import { normalizeTagName } from '../utils/text.js';
 
 export const TAG_ORGANIZATION_LOW_USAGE_THRESHOLD = 5;
 export const TAG_ORGANIZATION_RECOMMENDED_INTERVAL_DAYS = 183;
-export const MAX_ORGANIZATION_NEW_PARENT_COUNT = 3;
 export const MAX_ORGANIZATION_NEW_CHILD_COUNT = 12;
+
+// 动态一级标签数量限制策略
+const MIN_PARENT_TAGS = 3;
+const MAX_PARENT_TAGS = 15;
+const PARENT_CHILD_RATIO = 20; // 20:1 的比例
+
+/**
+ * 计算一级标签数量上限
+ * 策略：50个二级标签时最多5个一级，200个二级时最多10个一级
+ * 使用线性插值：maxParent = MIN(15, MAX(3, ceil(childCount / 20)))
+ *
+ * @param {number} childTagCount - 当前二级标签数量
+ * @returns {number} - 允许的最大一级标签数量
+ */
+export function calculateMaxParentTags(childTagCount) {
+  const count = Math.max(0, Number(childTagCount) || 0);
+  const calculated = Math.ceil(count / PARENT_CHILD_RATIO);
+  return Math.min(MAX_PARENT_TAGS, Math.max(MIN_PARENT_TAGS, calculated));
+}
+
+/**
+ * 计算可新增的一级标签数量
+ * @param {number} currentParentCount - 当前一级标签数量
+ * @param {number} childTagCount - 当前二级标签数量
+ * @returns {number} - 允许新增的一级标签数量
+ */
+export function calculateAllowedNewParentTags(currentParentCount, childTagCount) {
+  const maxAllowed = calculateMaxParentTags(childTagCount);
+  return Math.max(0, maxAllowed - Math.max(0, Number(currentParentCount) || 0));
+}
+
+/**
+ * 获取一级标签限制描述（用于 AI prompt）
+ * @param {number} childTagCount - 当前二级标签数量
+ * @returns {string} - 描述文本
+ */
+export function getParentTagLimitDescription(childTagCount) {
+  const max = calculateMaxParentTags(childTagCount);
+  return `当前有 ${childTagCount} 个二级标签，一级标签上限为 ${max} 个`;
+}
+
+// 向后兼容：保留常量导出，但值会根据实际情况动态计算
+export const MAX_ORGANIZATION_NEW_PARENT_COUNT = 3;
 
 const INVALID_GENERATED_TAG_NAMES = new Set([
   '',

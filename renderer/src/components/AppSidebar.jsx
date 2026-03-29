@@ -4,6 +4,7 @@ import i18n from '../i18n/config.js';
 import {
   CheckCircle2,
   AlertCircle,
+  Brain,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -773,6 +774,7 @@ export function AppSidebar({
   onClearTags,
   onFilterModeChange,
   onOpenTagSettings,
+  onOpenCoEvolution,
 }) {
   const { t } = useTranslation();
   const selectedSet = React.useMemo(
@@ -985,6 +987,14 @@ export function AppSidebar({
                     {t('sidebar.clearAll')}
                   </button>
                 )}
+                <button
+                  onClick={onOpenCoEvolution}
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink/40 hover:bg-clay/10 hover:text-ink/70"
+                  title={t('sidebar.coEvolution')}
+                >
+                  <Brain className="h-3.5 w-3.5" />
+                  {t('sidebar.coEvolution')}
+                </button>
                 <button
                   onClick={onOpenTagSettings}
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink/40 hover:bg-clay/10 hover:text-ink/70"
