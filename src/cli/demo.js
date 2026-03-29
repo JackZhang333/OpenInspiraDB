@@ -34,6 +34,9 @@ Commands:
   reanalyze <imageId>
   delete <imageId>
   sleep <ms>
+  openclaw-status              Check OpenClaw service status
+  co-evolution-start          Start tag co-evolution analysis
+  co-evolution-apply          Apply co-evolution suggestions (interactive)
 `);
 }
 
@@ -126,6 +129,83 @@ async function main() {
       const ms = Number(args[0] || 1000);
       await new Promise((resolve) => setTimeout(resolve, ms));
       console.log(JSON.stringify({ sleptMs: ms }));
+      return;
+    }
+
+    if (command === 'openclaw-status') {
+      const status = await app.checkOpenClawStatus();
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+
+    if (command === 'co-evolution-start') {
+      console.log('Starting co-evolution analysis...');
+      const result = await app.startCoEvolution();
+      console.log(JSON.stringify({
+        sessionId: result.sessionId,
+        openClawSessionId: result.openClawSessionId,
+        status: result.status,
+        stats: result.stats,
+        suggestionCount: result.suggestions.length,
+        suggestions: result.suggestions.map(s => ({
+          id: s.id,
+          kind: s.kind,
+          confidence: s.confidence,
+          reason: s.reason,
+        })),
+      }, null, 2));
+      return;
+    }
+
+    if (command === 'co-evolution-apply') {
+      const session = app.getCoEvolutionSession();
+      if (!session) {
+        console.error('Error: No active co-evolution session. Run "co-evolution-start" first.');
+        process.exitCode = 1;
+        return;
+      }
+
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const question = (prompt) => new Promise((resolve) => rl.question(prompt, resolve));
+
+      try {
+        console.log(`\nFound ${session.suggestions.length} suggestions:`);
+        for (const s of session.suggestions) {
+          console.log(`  [${s.kind}] ${s.name || s.targetTagName || ''} (confidence: ${Math.round(s.confidence * 100)}%)`);
+          console.log(`    Reason: ${s.reason}`);
+        }
+
+        const answer = await question('\nEnter suggestion IDs to apply (comma-separated), or "all": ');
+        let selectedIds;
+        if (answer.trim().toLowerCase() === 'all') {
+          selectedIds = session.suggestions.map(s => s.id);
+        } else {
+          selectedIds = answer.split(',').map(id => id.trim()).filter(Boolean);
+        }
+
+        if (selectedIds.length === 0) {
+          console.log('No suggestions selected.');
+          return;
+        }
+
+        const ratingAnswer = await question('Rate the suggestions 1-5 (optional, press Enter to skip): ');
+        const userRating = ratingAnswer.trim() ? Number(ratingAnswer) : null;
+
+        console.log('\nApplying suggestions...');
+        const result = await app.applyCoEvolutionSuggestions(selectedIds, { userRating });
+        console.log(JSON.stringify({
+          appliedCount: result.appliedCount,
+          skippedCount: result.skippedCount,
+          affectedImageCount: result.affectedImageCount,
+        }, null, 2));
+      } finally {
+        rl.close();
+      }
       return;
     }
 

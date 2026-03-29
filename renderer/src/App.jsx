@@ -6,6 +6,7 @@ import { useAppStore } from './store/useAppStore.js';
 import { AppSidebar, TagSettingsDialog } from './components/AppSidebar.jsx';
 import { LibraryWorkspace } from './components/LibraryWorkspace.jsx';
 import { DetailPanel } from './components/DetailPanel.jsx';
+import { CoEvolutionPanel } from './components/CoEvolutionPanel.jsx';
 
 export default function App() {
   const { t } = useTranslation();
@@ -55,11 +56,26 @@ export default function App() {
     deleteSelected,
     clearToast,
     init,
+    // 协同进化
+    coEvolutionSession,
+    coEvolutionLoading,
+    coEvolutionError,
+    openClawStatus,
+    checkOpenClawStatus,
+    startCoEvolution,
+    applyCoEvolutionSuggestions,
+    cancelCoEvolution,
+    setCoEvolutionSelectedIds,
+    toggleCoEvolutionSuggestion,
+    selectAllCoEvolutionSuggestions,
+    clearCoEvolutionSelections,
+    closeCoEvolutionPanel,
   } = useAppStore();
 
   const [queryDraft, setQueryDraft] = useState(query);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tagSettingsOpen, setTagSettingsOpen] = useState(false);
+  const [coEvolutionOpen, setCoEvolutionOpen] = useState(false);
   const [fullscreenPreviewImage, setFullscreenPreviewImage] = useState(null);
 
   // 网络状态检测
@@ -221,6 +237,7 @@ export default function App() {
             onClearTags={clearTags}
             onFilterModeChange={setFilterMode}
             onOpenTagSettings={() => setTagSettingsOpen(true)}
+            onOpenCoEvolution={() => setCoEvolutionOpen(true)}
           />
         </div>
 
@@ -359,6 +376,39 @@ export default function App() {
         onGetOrganizationStatus={getTagOrganizationStatus}
         onPreviewOrganization={previewTagOrganization}
         onApplyOrganizationPlan={applyTagOrganizationPlan}
+      />
+
+      <CoEvolutionPanel
+        isOpen={coEvolutionOpen}
+        onClose={() => {
+          setCoEvolutionOpen(false);
+          closeCoEvolutionPanel();
+        }}
+        session={coEvolutionSession}
+        loading={coEvolutionLoading}
+        error={coEvolutionError}
+        onStart={async () => {
+          try {
+            await startCoEvolution();
+          } catch (error) {
+            // 错误已在 store 中处理
+          }
+        }}
+        onApply={async (options) => {
+          try {
+            await applyCoEvolutionSuggestions(options);
+            setCoEvolutionOpen(false);
+          } catch (error) {
+            // 错误已在 store 中处理
+          }
+        }}
+        onCancel={() => {
+          cancelCoEvolution();
+          setCoEvolutionOpen(false);
+        }}
+        onToggleSuggestion={toggleCoEvolutionSuggestion}
+        onSelectAll={selectAllCoEvolutionSuggestions}
+        onClearSelections={clearCoEvolutionSelections}
       />
     </main>
   );

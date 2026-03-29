@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -438,6 +439,67 @@ function registerIpcHandlers() {
 
   ipcMain.handle('inspiradb:set-setting', (_, key, value) => {
     return inspiraApp.setSetting(key, value);
+  });
+
+  // ==================== 标签协同进化 (OpenClaw) ====================
+
+  ipcMain.handle('inspiradb:check-openclaw-status', async () => {
+    try {
+      return await inspiraApp.checkOpenClawStatus();
+    } catch (error) {
+      return { available: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('inspiradb:start-co-evolution', async () => {
+    logger.info('start-co-evolution-ipc-received');
+    try {
+      const result = await inspiraApp.startCoEvolution();
+      logger.info('start-co-evolution-succeeded', {
+        sessionId: result.sessionId,
+        suggestionCount: result.suggestions?.length,
+      });
+      return result;
+    } catch (error) {
+      logger.error('start-co-evolution-failed', {
+        error: String(error?.message || error),
+        code: error?.code || '',
+      });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('inspiradb:get-co-evolution-session', () => {
+    return inspiraApp.getCoEvolutionSession();
+  });
+
+  ipcMain.handle('inspiradb:apply-co-evolution-suggestions', async (_, payload = {}) => {
+    const { selectedIds, userRating, userComments } = payload;
+    logger.info('apply-co-evolution-suggestions-ipc-received', {
+      selectedCount: selectedIds?.length,
+      userRating,
+    });
+    try {
+      const result = await inspiraApp.applyCoEvolutionSuggestions(selectedIds, {
+        userRating,
+        userComments,
+      });
+      logger.info('apply-co-evolution-suggestions-succeeded', {
+        appliedCount: result?.appliedCount,
+      });
+      return result;
+    } catch (error) {
+      logger.error('apply-co-evolution-suggestions-failed', {
+        error: String(error?.message || error),
+        code: error?.code || '',
+      });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('inspiradb:cancel-co-evolution', () => {
+    inspiraApp.cancelCoEvolution();
+    return { cancelled: true };
   });
 
 }

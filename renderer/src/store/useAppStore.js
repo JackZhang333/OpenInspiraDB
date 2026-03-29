@@ -235,6 +235,11 @@ export const useAppStore = create((set, get) => ({
   error: null,
   copiedImageId: null,
   toast: null,
+  // 协同进化状态
+  coEvolutionSession: null,
+  coEvolutionLoading: false,
+  coEvolutionError: null,
+  openClawStatus: { available: false },
 
   setQuery(query) {
     set({ query });
@@ -731,5 +736,156 @@ export const useAppStore = create((set, get) => ({
     } catch (error) {
       set({ saving: false, error: getErrorMessage(error) });
     }
+  },
+
+  // ==================== 标签协同进化 (OpenClaw) ====================
+
+  async checkOpenClawStatus() {
+    try {
+      const status = await getBridge().checkOpenClawStatus();
+      set({ openClawStatus: status });
+      return status;
+    } catch (error) {
+      set({ openClawStatus: { available: false, error: error.message } });
+      return { available: false };
+    }
+  },
+
+  async startCoEvolution() {
+    set({ coEvolutionLoading: true, coEvolutionError: null });
+    try {
+      // 先检查 OpenClaw 状态
+      const status = await get().checkOpenClawStatus();
+      if (!status.available) {
+        const error = new Error('OpenClaw 服务不可用，请确保 OpenClaw 已启动');
+        error.code = 'OPENCLAW_UNAVAILABLE';
+        throw error;
+      }
+
+      const result = await getBridge().startCoEvolution();
+      set({
+        coEvolutionSession: {
+          id: result.sessionId,
+          openClawSessionId: result.openClawSessionId,
+          status: result.status,
+          suggestions: result.suggestions || [],
+          operations: result.operations || [],
+          stats: result.stats,
+          selectedIds: [],
+        },
+        coEvolutionLoading: false,
+      });
+      return result;
+    } catch (error) {
+      set({
+        coEvolutionLoading: false,
+        coEvolutionError: getErrorMessage(error),
+      });
+      throw error;
+    }
+  },
+
+  setCoEvolutionSelectedIds(selectedIds) {
+    const session = get().coEvolutionSession;
+    if (!session) return;
+    set({
+      coEvolutionSession: { ...session, selectedIds },
+    });
+  },
+
+  toggleCoEvolutionSuggestion(suggestionId) {
+    const session = get().coEvolutionSession;
+    if (!session) return;
+    const selectedIds = new Set(session.selectedIds || []);
+    if (selectedIds.has(suggestionId)) {
+      selectedIds.delete(suggestionId);
+    } else {
+      selectedIds.add(suggestionId);
+    }
+    set({
+      coEvolutionSession: { ...session, selectedIds: Array.from(selectedIds) },
+    });
+  },
+
+  selectAllCoEvolutionSuggestions() {
+    const session = get().coEvolutionSession;
+    if (!session || !session.suggestions) return;
+    set({
+      coEvolutionSession: {
+        ...session,
+        selectedIds: session.suggestions.map((s) => s.id),
+      },
+    });
+  },
+
+  clearCoEvolutionSelections() {
+    const session = get().coEvolutionSession;
+    if (!session) return;
+    set({
+      coEvolutionSession: { ...session, selectedIds: [] },
+    });
+  },
+
+  async applyCoEvolutionSuggestions(options = {}) {
+    const session = get().coEvolutionSession;
+    if (!session || !session.selectedIds?.length) {
+      return;
+    }
+
+    set({ coEvolutionLoading: true, coEvolutionError: null });
+    try {
+      const result = await getBridge().applyCoEvolutionSuggestions({
+        selectedIds: session.selectedIds,
+        userRating: options.userRating,
+        userComments: options.userComments,
+      });
+
+      // 更新会话状态
+      set({
+        coEvolutionSession: {
+          ...session,
+          status: 'completed',
+          result,
+        },
+        coEvolutionLoading: false,
+      });
+
+      // 刷新标签树和搜索结果
+      await get().refreshSearch();
+      await get().reloadSelectedDetail();
+
+      get().showToast(
+        i18n.t('feedback.coEvolutionApplied', { count: result.appliedCount }),
+        'success'
+      );
+
+      return result;
+    } catch (error) {
+      set({
+        coEvolutionLoading: false,
+        coEvolutionError: getErrorMessage(error),
+      });
+      throw error;
+    }
+  },
+
+  async cancelCoEvolution() {
+    try {
+      await getBridge().cancelCoEvolution();
+    } catch (error) {
+      // 忽略错误
+    }
+    set({
+      coEvolutionSession: null,
+      coEvolutionLoading: false,
+      coEvolutionError: null,
+    });
+  },
+
+  closeCoEvolutionPanel() {
+    set({
+      coEvolutionSession: null,
+      coEvolutionError: null,
+    });
   },
 }));

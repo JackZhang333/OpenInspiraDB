@@ -99,7 +99,8 @@
       "delete": "删除「{{currentName}}」",
       "deleteShort": "删除",
       "create": "新增"
-    }
+    },
+    "coEvolution": "协同进化"
   },
   "detailPanel": {
     "title": "详情",
@@ -191,7 +192,39 @@
     "exportImageSuccessWithWarning": "图片已导出，但元数据写入失败",
     "exportBatchSuccess": "已导出 {{count}} 张图片",
     "exportBatchSummary": "已导出 {{exportedCount}} 张，失败 {{failedCount}} 张，元数据告警 {{warningCount}} 项",
-    "deleteImageSuccess": "删除成功"
+    "deleteImageSuccess": "删除成功",
+    "coEvolutionApplied": "已应用 {{count}} 条建议"
+  },
+  "coEvolution": {
+    "title": "标签协同进化",
+    "description": "通过 OpenClaw AI 分析标签体系，获取智能化的标签整理建议。",
+    "startAnalysis": "开始分析",
+    "analyzing": "正在分析...",
+    "analyzingDescription": "OpenClaw 正在分析你的标签体系，请稍候",
+    "suggestions": "整理建议",
+    "stats": "当前 {{parentCount}} 个一级标签 / {{childCount}} 个二级标签（上限 {{maxParents}} 个一级标签）",
+    "noSuggestions": "当前标签体系较为简洁，无需整理",
+    "selectAll": "全选",
+    "clearSelection": "清空选择",
+    "selectedCount": "已选择 {{count}} / {{total}} 条建议",
+    "applySelected": "应用所选 ({{count}})",
+    "rateSuggestions": "为本次建议评分（可选）",
+    "comments": "意见建议（可选）",
+    "commentsPlaceholder": "请分享你对本次建议的反馈，帮助 OpenClaw 进化...",
+    "kind": {
+      "create": "新增",
+      "rename": "重命名",
+      "merge": "合并",
+      "move": "移动",
+      "delete": "删除"
+    },
+    "operationDescription": {
+      "create": "新增标签「{{name}}」",
+      "rename": "将「{{from}}」重命名为「{{to}}」",
+      "merge": "将「{{from}}」合并到「{{to}}」",
+      "move": "将「{{name}}」移动到「{{to}}」分类",
+      "delete": "删除标签「{{name}}」"
+    }
   },
   "common": {
     "loading": "加载中...",
